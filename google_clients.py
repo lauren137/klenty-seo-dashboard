@@ -345,6 +345,35 @@ def ga4_overview(start: str, end: str) -> dict:
     }
 
 
+def ga4_organic_overview(start: str, end: str) -> dict:
+    """Site-wide organic-search-only sessions/users/views."""
+    client = _ga4_client()
+    req = RunReportRequest(
+        property=f"properties/{GA4_PROPERTY_ID}",
+        date_ranges=[DateRange(start_date=start, end_date=end)],
+        metrics=[
+            Metric(name="sessions"),
+            Metric(name="totalUsers"),
+            Metric(name="screenPageViews"),
+        ],
+        dimension_filter=FilterExpression(
+            filter=Filter(
+                field_name="sessionDefaultChannelGroup",
+                string_filter=Filter.StringFilter(value="Organic Search"),
+            )
+        ),
+    )
+    resp = client.run_report(req)
+    if not resp.rows:
+        return {"sessions": 0, "users": 0, "views": 0}
+    r = resp.rows[0]
+    return {
+        "sessions": int(float(r.metric_values[0].value)),
+        "users": int(float(r.metric_values[1].value)),
+        "views": int(float(r.metric_values[2].value)),
+    }
+
+
 def ga4_page_trend(page: str, start: str, end: str) -> list[dict]:
     """Daily GA4 trend for one page."""
     client = _ga4_client()

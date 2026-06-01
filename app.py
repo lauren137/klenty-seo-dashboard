@@ -135,7 +135,11 @@ def fetch_metrics(urls: tuple, start: str, end: str):
 
 @st.cache_data(ttl=900, show_spinner=False)
 def fetch_overview(start: str, end: str):
-    return {"gsc": gc.gsc_overview(start, end), "ga4": gc.ga4_overview(start, end)}
+    return {
+        "gsc": gc.gsc_overview(start, end),
+        "ga4": gc.ga4_overview(start, end),
+        "ga4_organic": gc.ga4_organic_overview(start, end),
+    }
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -326,15 +330,25 @@ def card(label, value, delta_html=""):
     """
 
 
-c1, c2, c3, c4, c5 = st.columns(5)
 g = overview["gsc"]; pg = prior["gsc"]
 a = overview["ga4"]; pa = prior["ga4"]
+ao = overview["ga4_organic"]; pao = prior["ga4_organic"]
 
+# Row 1: Google Search Console (site-wide)
+st.markdown('<div class="section-title">Klenty · Search Console</div>', unsafe_allow_html=True)
+c1, c2, c3, c4 = st.columns(4)
 c1.markdown(card("Clicks", f"{g['clicks']:,}", delta_str(g['clicks'], pg['clicks'])), unsafe_allow_html=True)
 c2.markdown(card("Impressions", f"{g['impressions']:,}", delta_str(g['impressions'], pg['impressions'])), unsafe_allow_html=True)
 c3.markdown(card("Avg Position", f"{g['position']:.1f}", delta_str(g['position'], pg['position'], inverse=True)), unsafe_allow_html=True)
-c4.markdown(card("Users", f"{a['users']:,}", delta_str(a['users'], pa['users'])), unsafe_allow_html=True)
-c5.markdown(card("Sessions", f"{a['sessions']:,}", delta_str(a['sessions'], pa['sessions'])), unsafe_allow_html=True)
+c4.markdown(card("CTR", f"{g['ctr']:.2f}%", delta_str(g['ctr'], pg['ctr'])), unsafe_allow_html=True)
+
+# Row 2: Site-wide traffic — Overall + Organic
+st.markdown('<div class="section-title" style="margin-top:1.5rem;">Klenty · Site Traffic (GA4)</div>', unsafe_allow_html=True)
+c5, c6, c7, c8 = st.columns(4)
+c5.markdown(card("Overall Users", f"{a['users']:,}", delta_str(a['users'], pa['users'])), unsafe_allow_html=True)
+c6.markdown(card("Overall Sessions", f"{a['sessions']:,}", delta_str(a['sessions'], pa['sessions'])), unsafe_allow_html=True)
+c7.markdown(card("Organic Users", f"{ao['users']:,}", delta_str(ao['users'], pao['users'])), unsafe_allow_html=True)
+c8.markdown(card("Organic Sessions", f"{ao['sessions']:,}", delta_str(ao['sessions'], pao['sessions'])), unsafe_allow_html=True)
 
 # ---------------- Build dataframe ----------------
 rows = []
