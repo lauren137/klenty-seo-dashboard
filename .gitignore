@@ -1,0 +1,28 @@
+# Secrets — NEVER commit these
+.streamlit/secrets.toml
+credentials.json
+token.json
+*.env
+.env*
+
+# Local DB (regenerated on startup)
+dashboard.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log

@@ -1,0 +1,376 @@
+"""GSC + GA4 API clients. Loads OAuth from Streamlit secrets in prod, local files in dev."""
+import json
+import os
+from datetime import date, timedelta
+from typing import Optional
+
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from google.analytics.data_v1beta import BetaAnalyticsDataClient
+from google.analytics.data_v1beta.types import (
+    RunReportRequest, DateRange, Metric, Dimension,
+    Filter, FilterExpression, FilterExpressionList,
+)
+from googleapiclient.discovery import build
+
+# Local dev paths (only used if no Streamlit secrets are present)
+LOCAL_MCP_DIR = "/Users/lauren/Desktop/ga4-gsc-mcp-server"
+LOCAL_TOKEN_FILE = os.path.join(LOCAL_MCP_DIR, "token.json")
+
+# Config — overridable via Streamlit secrets / env vars
+GA4_PROPERTY_ID = os.environ.get("GA4_PROPERTY_ID", "264568011")
+GSC_SITE_URL = os.environ.get("GSC_SITE_URL", "sc-domain:klenty.com")
+SITE_DOMAIN = os.environ.get("SITE_DOMAIN", "https://www.klenty.com")
+
+SCOPES = [
+    "https://www.googleapis.com/auth/analytics.readonly",
+    "https://www.googleapis.com/auth/webmasters.readonly",
+]
+
+
+def _load_token_dict() -> dict | None:
+    """Try Streamlit secrets first, fall back to local token.json."""
+    # 1. Streamlit Cloud secrets
+    try:
+        import streamlit as st
+        if "google_oauth" in st.secrets:
+            cfg = st.secrets["google_oauth"]
+            return {
+                "token": cfg.get("token", ""),
+                "refresh_token": cfg["refresh_token"],
+                "token_uri": cfg.get("token_uri", "https://oauth2.googleapis.com/token"),
+                "client_id": cfg["client_id"],
+                "client_secret": cfg["client_secret"],
+                "scopes": SCOPES,
+            }
+    except Exception:
+        pass
+    # 2. Env vars (e.g. when running on Render/Railway)
+    if os.environ.get("GOOGLE_REFRESH_TOKEN"):
+        return {
+            "token": "",
+            "refresh_token": os.environ["GOOGLE_REFRESH_TOKEN"],
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "client_id": os.environ["GOOGLE_CLIENT_ID"],
+            "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
+            "scopes": SCOPES,
+        }
+    # 3. Local file (dev mode)
+    if os.path.exists(LOCAL_TOKEN_FILE):
+        with open(LOCAL_TOKEN_FILE) as f:
+            return json.load(f)
+    return None
+
+
+def get_credentials() -> Credentials:
+    token_data = _load_token_dict()
+    if not token_data:
+        raise RuntimeError(
+            "No OAuth credentials found. Set Streamlit secrets [google_oauth] or "
+            "place token.json at " + LOCAL_TOKEN_FILE
+        )
+    creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            # If we loaded from a local file, persist the refreshed token
+            if os.path.exists(LOCAL_TOKEN_FILE):
+                try:
+                    with open(LOCAL_TOKEN_FILE, "w") as f:
+                        f.write(creds.to_json())
+                except OSError:
+                    pass  # Read-only FS on cloud — fine, token refreshes in-memory
+    return creds
+
+
+def date_range(days: int) -> tuple[str, str]:
+    end = date.today()
+    start = end - timedelta(days=days - 1)
+    return start.isoformat(), end.isoformat()
+
+
+def prior_range(days: int) -> tuple[str, str]:
+    end = date.today() - timedelta(days=days)
+    start = end - timedelta(days=days - 1)
+    return start.isoformat(), end.isoformat()
+
+
+# ---------- GSC ----------
+
+def gsc_page_metrics(
+    pages: list[str],
+    start: str,
+    end: str,
+) -> dict[str, dict]:
+    """Pull per-URL clicks/impressions/ctr/position from GSC.
+
+    Returns {page_path: {clicks, impressions, ctr, position}}.
+    """
+    svc = build("searchconsole", "v1", credentials=get_credentials(), cache_discovery=False)
+    full_urls = {p: f"{SITE_DOMAIN}{p}" for p in pages}
+
+    # Single query, dimension=page, filter to our URLs
+    body = {
+        "startDate": start,
+        "endDate": end,
+        "dimensions": ["page"],
+        "rowLimit": 25000,
+        "dimensionFilterGroups": [{
+            "filters": [{
+                "dimension": "page",
+                "operator": "includingRegex",
+                "expression": "|".join(p.replace("/", r"\/") for p in pages),
+            }]
+        }],
+    }
+    try:
+        resp = svc.searchanalytics().query(siteUrl=GSC_SITE_URL, body=body).execute()
+    except Exception:
+        # Fallback: pull top 25000 pages and match locally
+        resp = svc.searchanalytics().query(siteUrl=GSC_SITE_URL, body={
+            "startDate": start, "endDate": end,
+            "dimensions": ["page"], "rowLimit": 25000,
+        }).execute()
+
+    by_page = {}
+    for row in resp.get("rows", []):
+        url = row["keys"][0]
+        for path, full in full_urls.items():
+            if url == full or url.rstrip("/") == full.rstrip("/"):
+                by_page[path] = {
+                    "clicks": int(row.get("clicks", 0)),
+                    "impressions": int(row.get("impressions", 0)),
+                    "ctr": float(row.get("ctr", 0)) * 100,
+                    "position": float(row.get("position", 0)),
+                }
+                break
+
+    for p in pages:
+        if p not in by_page:
+            by_page[p] = {"clicks": 0, "impressions": 0, "ctr": 0.0, "position": None}
+    return by_page
+
+
+def gsc_overview_daily(start: str, end: str) -> list[dict]:
+    """Daily site-wide GSC totals."""
+    svc = build("searchconsole", "v1", credentials=get_credentials(), cache_discovery=False)
+    resp = svc.searchanalytics().query(
+        siteUrl=GSC_SITE_URL,
+        body={"startDate": start, "endDate": end, "dimensions": ["date"], "rowLimit": 1000},
+    ).execute()
+    return [{
+        "date": r["keys"][0],
+        "clicks": int(r.get("clicks", 0)),
+        "impressions": int(r.get("impressions", 0)),
+        "ctr": float(r.get("ctr", 0)) * 100,
+        "position": float(r.get("position", 0)),
+    } for r in resp.get("rows", [])]
+
+
+def ga4_overview_daily(start: str, end: str) -> list[dict]:
+    """Daily site-wide GA4 totals."""
+    client = _ga4_client()
+    req = RunReportRequest(
+        property=f"properties/{GA4_PROPERTY_ID}",
+        date_ranges=[DateRange(start_date=start, end_date=end)],
+        dimensions=[Dimension(name="date")],
+        metrics=[
+            Metric(name="sessions"),
+            Metric(name="totalUsers"),
+            Metric(name="screenPageViews"),
+        ],
+        limit=1000,
+    )
+    resp = client.run_report(req)
+    out = []
+    for row in resp.rows:
+        d = row.dimension_values[0].value
+        iso = f"{d[:4]}-{d[4:6]}-{d[6:]}"
+        out.append({
+            "date": iso,
+            "sessions": int(float(row.metric_values[0].value)),
+            "users": int(float(row.metric_values[1].value)),
+            "views": int(float(row.metric_values[2].value)),
+        })
+    return sorted(out, key=lambda x: x["date"])
+
+
+def gsc_overview(start: str, end: str) -> dict:
+    svc = build("searchconsole", "v1", credentials=get_credentials(), cache_discovery=False)
+    resp = svc.searchanalytics().query(
+        siteUrl=GSC_SITE_URL,
+        body={"startDate": start, "endDate": end, "dimensions": []},
+    ).execute()
+    rows = resp.get("rows", [])
+    if not rows:
+        return {"clicks": 0, "impressions": 0, "ctr": 0.0, "position": 0.0}
+    r = rows[0]
+    return {
+        "clicks": int(r.get("clicks", 0)),
+        "impressions": int(r.get("impressions", 0)),
+        "ctr": float(r.get("ctr", 0)) * 100,
+        "position": float(r.get("position", 0)),
+    }
+
+
+def gsc_page_trend(page: str, start: str, end: str) -> list[dict]:
+    """Daily trend for one page."""
+    svc = build("searchconsole", "v1", credentials=get_credentials(), cache_discovery=False)
+    full = f"{SITE_DOMAIN}{page}"
+    body = {
+        "startDate": start,
+        "endDate": end,
+        "dimensions": ["date"],
+        "rowLimit": 1000,
+        "dimensionFilterGroups": [{
+            "filters": [{"dimension": "page", "operator": "equals", "expression": full}]
+        }],
+    }
+    resp = svc.searchanalytics().query(siteUrl=GSC_SITE_URL, body=body).execute()
+    return [{
+        "date": r["keys"][0],
+        "clicks": int(r.get("clicks", 0)),
+        "impressions": int(r.get("impressions", 0)),
+        "ctr": float(r.get("ctr", 0)) * 100,
+        "position": float(r.get("position", 0)),
+    } for r in resp.get("rows", [])]
+
+
+# ---------- GA4 ----------
+
+def _ga4_client():
+    return BetaAnalyticsDataClient(credentials=get_credentials())
+
+
+def ga4_page_metrics(
+    pages: list[str],
+    start: str,
+    end: str,
+) -> dict[str, dict]:
+    """Pull per-URL views/sessions/users/bounce/organic from GA4."""
+    client = _ga4_client()
+    page_set = {p.rstrip("/") for p in pages}
+
+    # ---- Overall metrics ----
+    req = RunReportRequest(
+        property=f"properties/{GA4_PROPERTY_ID}",
+        date_ranges=[DateRange(start_date=start, end_date=end)],
+        dimensions=[Dimension(name="pagePath")],
+        metrics=[
+            Metric(name="screenPageViews"),
+            Metric(name="sessions"),
+            Metric(name="totalUsers"),
+            Metric(name="bounceRate"),
+        ],
+        limit=100000,
+    )
+    resp = client.run_report(req)
+
+    by_page = {}
+    for row in resp.rows:
+        path = row.dimension_values[0].value
+        norm = path.rstrip("/")
+        if norm in page_set:
+            original = next(p for p in pages if p.rstrip("/") == norm)
+            existing = by_page.get(original, {"views": 0, "sessions": 0, "users": 0, "bounce": 0.0, "organic": 0, "organic_users": 0})
+            views = int(float(row.metric_values[0].value))
+            sessions = int(float(row.metric_values[1].value))
+            users = int(float(row.metric_values[2].value))
+            bounce = float(row.metric_values[3].value) * 100
+            by_page[original] = {
+                **existing,
+                "views": existing["views"] + views,
+                "sessions": existing["sessions"] + sessions,
+                "users": existing["users"] + users,
+                "bounce": bounce,
+            }
+
+    # ---- Organic-only metrics ----
+    organic_req = RunReportRequest(
+        property=f"properties/{GA4_PROPERTY_ID}",
+        date_ranges=[DateRange(start_date=start, end_date=end)],
+        dimensions=[Dimension(name="pagePath")],
+        metrics=[
+            Metric(name="sessions"),
+            Metric(name="totalUsers"),
+        ],
+        dimension_filter=FilterExpression(
+            filter=Filter(
+                field_name="sessionDefaultChannelGroup",
+                string_filter=Filter.StringFilter(value="Organic Search"),
+            )
+        ),
+        limit=100000,
+    )
+    organic_resp = client.run_report(organic_req)
+    for row in organic_resp.rows:
+        path = row.dimension_values[0].value
+        norm = path.rstrip("/")
+        if norm in page_set:
+            original = next(p for p in pages if p.rstrip("/") == norm)
+            entry = by_page.setdefault(original, {"views": 0, "sessions": 0, "users": 0, "bounce": 0.0, "organic": 0, "organic_users": 0})
+            entry["organic"] = entry.get("organic", 0) + int(float(row.metric_values[0].value))
+            entry["organic_users"] = entry.get("organic_users", 0) + int(float(row.metric_values[1].value))
+
+    for p in pages:
+        if p not in by_page:
+            by_page[p] = {"views": 0, "sessions": 0, "users": 0, "bounce": 0.0, "organic": 0, "organic_users": 0}
+        else:
+            by_page[p].setdefault("organic", 0)
+            by_page[p].setdefault("organic_users", 0)
+    return by_page
+
+
+def ga4_overview(start: str, end: str) -> dict:
+    client = _ga4_client()
+    req = RunReportRequest(
+        property=f"properties/{GA4_PROPERTY_ID}",
+        date_ranges=[DateRange(start_date=start, end_date=end)],
+        metrics=[
+            Metric(name="sessions"),
+            Metric(name="totalUsers"),
+            Metric(name="screenPageViews"),
+            Metric(name="bounceRate"),
+        ],
+    )
+    resp = client.run_report(req)
+    if not resp.rows:
+        return {"sessions": 0, "users": 0, "views": 0, "bounce": 0.0}
+    r = resp.rows[0]
+    return {
+        "sessions": int(float(r.metric_values[0].value)),
+        "users": int(float(r.metric_values[1].value)),
+        "views": int(float(r.metric_values[2].value)),
+        "bounce": float(r.metric_values[3].value) * 100,
+    }
+
+
+def ga4_page_trend(page: str, start: str, end: str) -> list[dict]:
+    """Daily GA4 trend for one page."""
+    client = _ga4_client()
+    norm = page.rstrip("/")
+    req = RunReportRequest(
+        property=f"properties/{GA4_PROPERTY_ID}",
+        date_ranges=[DateRange(start_date=start, end_date=end)],
+        dimensions=[Dimension(name="date"), Dimension(name="pagePath")],
+        metrics=[
+            Metric(name="screenPageViews"),
+            Metric(name="sessions"),
+            Metric(name="totalUsers"),
+        ],
+        limit=100000,
+    )
+    resp = client.run_report(req)
+    daily = {}
+    for row in resp.rows:
+        d = row.dimension_values[0].value
+        path = row.dimension_values[1].value.rstrip("/")
+        if path != norm:
+            continue
+        # GA4 date format is YYYYMMDD
+        iso = f"{d[:4]}-{d[4:6]}-{d[6:]}"
+        entry = daily.setdefault(iso, {"date": iso, "views": 0, "sessions": 0, "users": 0})
+        entry["views"] += int(float(row.metric_values[0].value))
+        entry["sessions"] += int(float(row.metric_values[1].value))
+        entry["users"] += int(float(row.metric_values[2].value))
+    return sorted(daily.values(), key=lambda x: x["date"])
