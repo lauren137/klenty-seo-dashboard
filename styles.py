@@ -5,7 +5,13 @@ ASANA_CSS = """
 /* ---- Reset Streamlit chrome ---- */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
-header {visibility: hidden;}
+
+/* Keep the header bar visible so the sidebar toggle works.
+   Just make it transparent so it doesn't visually clash. */
+header[data-testid="stHeader"] {
+    background: transparent !important;
+    height: 2.5rem;
+}
 
 .block-container {
     padding-top: 1.5rem;
