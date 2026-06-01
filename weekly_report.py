@@ -74,6 +74,114 @@ def diagnose_url(m: dict, prior: dict) -> list[dict]:
 
 # ---------------- Slack Block Kit ----------------
 
+def build_narrative(period_label: str, overview: dict, prior_ov: dict,
+                    movers: list[dict], fix_groups: dict) -> str:
+    """Plain-English summary paragraph — copy-paste friendly."""
+    g = overview["gsc"]; pg = prior_ov["gsc"]
+    a = overview["ga4"]; pa = prior_ov["ga4"]
+
+    def chg(curr, prev, label, inverse=False):
+        if not prev:
+            return f"{label} held at {curr}"
+        delta = (curr - prev) / prev * 100
+        direction = "up" if delta > 0 else "down"
+        if inverse:  # for position (lower=better)
+            direction = "worsened" if delta > 0 else "improved"
+        return f"{label} {direction} {abs(delta):.1f}%"
+
+    top = sorted(movers, key=lambda x: x["clicks"], reverse=True)[:1]
+    gainers = sorted([m for m in movers if m["delta"] > 0], key=lambda x: x["delta"], reverse=True)[:2]
+    losers = sorted([m for m in movers if m["delta"] < 0], key=lambda x: x["delta"])[:2]
+    high_sev_fixes = [(label, payload) for label, payload in fix_groups.items()
+                      if payload["severity"] == "high"]
+    striking_count = sum(1 for m in movers if m.get("position") and 10 <= m["position"] <= 20)
+    zero_count = sum(1 for m in movers if m["clicks"] == 0 and m.get("organic", 0) == 0)
+
+    paragraphs = []
+
+    # ---- Paragraph 1: overall headline ----
+    p1 = (
+        f"*Week of {period_label}* — Klenty's tracked URLs received "
+        f"*{g['clicks']:,} clicks* ({chg(g['clicks'], pg['clicks'], 'WoW')}) "
+        f"from *{g['impressions']:,} impressions* ({chg(g['impressions'], pg['impressions'], 'WoW')}). "
+        f"Average search position {chg(g['position'], pg['position'], '', inverse=True).strip()} "
+        f"from {pg['position']:.1f} to {g['position']:.1f}, with CTR at {g['ctr']:.2f}%. "
+        f"GA4 reported *{a['users']:,} users* ({chg(a['users'], pa['users'], 'WoW')}) "
+        f"and {a['sessions']:,} sessions across the tracked set."
+    )
+    paragraphs.append(p1)
+
+    # ---- Paragraph 2: winners + losers ----
+    p2_parts = []
+    if top:
+        t = top[0]
+        pos_str = f"position {t['position']:.1f}" if t["position"] else "no rank"
+        p2_parts.append(
+            f"Top performer was `{t['url']}` with *{t['clicks']:,} clicks* "
+            f"and {t['organic']:,} organic sessions at {pos_str}."
+        )
+    if gainers:
+        g_names = ", ".join(f"`{m['url']}` (+{m['delta']})" for m in gainers)
+        p2_parts.append(f"Biggest gainers: {g_names}.")
+    if losers:
+        l_names = ", ".join(f"`{m['url']}` ({m['delta']})" for m in losers)
+        p2_parts.append(f"Biggest declines: {l_names}.")
+    if p2_parts:
+        paragraphs.append(" ".join(p2_parts))
+
+    # ---- Categorize high-severity issues into clean buckets ----
+    def categorize_high_sev():
+        buckets = {
+            "position drops": 0,
+            "indexing / not ranking": 0,
+            "low CTR at top positions": 0,
+            "click declines": 0,
+            "tracking gaps": 0,
+        }
+        for label, payload in high_sev_fixes:
+            count = len(payload["urls"])
+            ll = label.lower()
+            if "dropped" in ll and "→" in label and "position" not in ll and "click" not in ll:
+                buckets["position drops"] += count
+            elif "clicks dropped" in ll:
+                buckets["click declines"] += count
+            elif "not ranking" in ll or "not indexed" in ll:
+                buckets["indexing / not ranking"] += count
+            elif "low ctr" in ll:
+                buckets["low CTR at top positions"] += count
+            elif "tracking" in ll:
+                buckets["tracking gaps"] += count
+            else:
+                buckets["position drops"] += count  # default bucket for misc drops
+        return {k: v for k, v in buckets.items() if v > 0}
+
+    # ---- Paragraph 3: fixes + opportunities ----
+    p3_parts = []
+    high_buckets = categorize_high_sev()
+    if high_buckets:
+        total_urls = sum(high_buckets.values())
+        bucket_phrases = [f"*{n}* {name}" for name, n in sorted(high_buckets.items(), key=lambda x: -x[1])]
+        p3_parts.append(
+            f"This week's diagnosis flagged {total_urls} URL-issue{'s' if total_urls != 1 else ''} needing attention: "
+            f"{', '.join(bucket_phrases)}."
+        )
+    if striking_count:
+        p3_parts.append(
+            f"*{striking_count} URL{'s' if striking_count != 1 else ''}* sit in striking distance "
+            f"(positions 10–20) — strong candidates to push to page 1 this week with title rewrites, "
+            f"FAQ schema, and internal linking from authority pages."
+        )
+    if zero_count:
+        p3_parts.append(
+            f"{zero_count} URL{'s' if zero_count != 1 else ''} had zero clicks and zero organic traffic — "
+            f"audit indexing status and topical relevance, or consider consolidating into stronger sibling pages."
+        )
+    if p3_parts:
+        paragraphs.append(" ".join(p3_parts))
+
+    return "\n\n".join(paragraphs)
+
+
 def build_blocks(period_label: str, prior_label: str, overview: dict, prior_ov: dict,
                  movers: list[dict], fix_groups: dict, deep_link: str | None) -> list[dict]:
     g = overview["gsc"]; pg = prior_ov["gsc"]
@@ -99,6 +207,12 @@ def build_blocks(period_label: str, prior_label: str, overview: dict, prior_ov: 
     blocks.append({"type": "context", "elements": [
         {"type": "mrkdwn", "text": f"Comparing to prior week ({prior_label})"}
     ]})
+    blocks.append({"type": "divider"})
+
+    # ---- Narrative summary (copy-paste friendly) ----
+    narrative = build_narrative(period_label, overview, prior_ov, movers, fix_groups)
+    blocks.append({"type": "section", "text": {"type": "mrkdwn",
+                   "text": f"*📝 Executive summary*\n{narrative}"}})
     blocks.append({"type": "divider"})
 
     # ---- Overall ----
