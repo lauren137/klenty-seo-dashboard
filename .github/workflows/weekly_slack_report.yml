@@ -1,0 +1,43 @@
+name: Weekly SEO Slack Report
+
+on:
+  schedule:
+    # Tuesday 09:00 IST = 03:30 UTC
+    - cron: "30 3 * * 2"
+  workflow_dispatch:  # Manual "Run workflow" button in the Actions tab
+
+jobs:
+  send-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install minimal deps
+        run: |
+          pip install --upgrade pip
+          pip install \
+            google-analytics-data \
+            google-api-python-client \
+            google-auth \
+            google-auth-oauthlib \
+            google-auth-httplib2
+
+      - name: Run weekly report
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          GA4_PROPERTY_ID: ${{ secrets.GA4_PROPERTY_ID }}
+          GSC_SITE_URL: ${{ secrets.GSC_SITE_URL }}
+          SITE_DOMAIN: ${{ secrets.SITE_DOMAIN }}
+          DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+        run: python weekly_report.py
