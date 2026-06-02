@@ -408,6 +408,46 @@ st.dataframe(
     height=min(600, 60 + 35 * len(df)),
 )
 
+# ---- Totals row across tracked URLs ----
+if len(df) > 0:
+    total_clicks = int(df["Clicks"].sum())
+    total_impr = int(df["Impressions"].sum())
+    total_org = int(df["Organic Traffic"].sum())
+    total_org_users = int(df["Organic Users"].sum())
+    total_views = int(df["Views"].sum())
+    total_sessions = int(df["Sessions"].sum())
+    total_users = int(df["Users"].sum())
+    # Weighted average position (by impressions)
+    pos_df = df[df["Position"].notna() & (df["Impressions"] > 0)]
+    if len(pos_df) > 0 and pos_df["Impressions"].sum() > 0:
+        avg_pos = (pos_df["Position"] * pos_df["Impressions"]).sum() / pos_df["Impressions"].sum()
+        avg_pos_str = f"{avg_pos:.1f}"
+    else:
+        avg_pos_str = "—"
+    avg_ctr = (total_clicks / total_impr * 100) if total_impr else 0
+
+    totals_df = pd.DataFrame([{
+        "URL": f"TOTAL ({len(df)} URLs)",
+        "Position": avg_pos_str,
+        "Clicks": f"{total_clicks:,}",
+        "Impressions": f"{total_impr:,}",
+        "CTR %": f"{avg_ctr:.2f}%",
+        "Organic Traffic": f"{total_org:,}",
+        "Organic Users": f"{total_org_users:,}",
+        "Views": f"{total_views:,}",
+        "Sessions": f"{total_sessions:,}",
+        "Users": f"{total_users:,}",
+        "Bounce %": "—",
+    }])
+    st.dataframe(
+        totals_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={"URL": st.column_config.TextColumn("URL", width="large")},
+        height=60,
+    )
+    st.caption("Totals row shows: sum of Clicks · Impressions · Organic Traffic · Organic Users · Views · Sessions · Users. Position is impression-weighted average. CTR % is recalculated from total clicks ÷ total impressions.")
+
 # Action row
 act1, act2, _ = st.columns([1, 1, 6])
 with act1:
