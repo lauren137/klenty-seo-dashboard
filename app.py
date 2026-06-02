@@ -388,8 +388,39 @@ df = df.sort_values(col, ascending=asc, na_position="last")
 
 st.markdown('<div class="section-title">Tracked URLs · Performance</div>', unsafe_allow_html=True)
 
+# ---- Append TOTAL row at the bottom (totals only for: Clicks, Impressions,
+#      Organic Traffic, Organic Users, Views, Sessions, Users) ----
+import numpy as np
+if len(df) > 0:
+    total_row = pd.DataFrame([{
+        "URL": f"TOTAL · {len(df)} URLs",
+        "Position": np.nan,           # no total
+        "Clicks": int(df["Clicks"].sum()),
+        "Impressions": int(df["Impressions"].sum()),
+        "CTR %": np.nan,              # no total
+        "Organic Traffic": int(df["Organic Traffic"].sum()),
+        "Organic Users": int(df["Organic Users"].sum()),
+        "Views": int(df["Views"].sum()),
+        "Sessions": int(df["Sessions"].sum()),
+        "Users": int(df["Users"].sum()),
+        "Bounce %": np.nan,           # no total
+    }])
+    df_with_total = pd.concat([df, total_row], ignore_index=True)
+else:
+    df_with_total = df
+
+def _highlight_total(row):
+    if str(row.get("URL", "")).startswith("TOTAL"):
+        return [
+            "background-color: #F0F1F3; font-weight: 700; "
+            "border-top: 2px solid #D8D9DC; color: #1E1F21;"
+        ] * len(row)
+    return [""] * len(row)
+
+styled_df = df_with_total.style.apply(_highlight_total, axis=1)
+
 st.dataframe(
-    df,
+    styled_df,
     use_container_width=True,
     hide_index=True,
     column_config={
@@ -405,45 +436,8 @@ st.dataframe(
         "Users": st.column_config.NumberColumn("Users", format="%d"),
         "Bounce %": st.column_config.NumberColumn("Bounce %", format="%.1f%%"),
     },
-    height=min(600, 60 + 35 * len(df)),
+    height=min(650, 60 + 35 * len(df_with_total)),
 )
-
-# ---- Totals strip across tracked URLs ----
-if len(df) > 0:
-    total_clicks = int(df["Clicks"].sum())
-    total_impr = int(df["Impressions"].sum())
-    total_org = int(df["Organic Traffic"].sum())
-    total_org_users = int(df["Organic Users"].sum())
-    total_views = int(df["Views"].sum())
-    total_sessions = int(df["Sessions"].sum())
-    total_users = int(df["Users"].sum())
-
-    totals_html = f"""
-    <div style="
-        background: #FAFAFB;
-        border: 1px solid #EDEDED;
-        border-radius: 10px;
-        padding: 1rem 1.25rem;
-        margin-top: 0.75rem;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 1.75rem;
-        font-size: 0.9rem;
-        align-items: center;
-    ">
-      <div style="font-weight: 700; font-size: 0.95rem; color: #1E1F21; padding-right: 0.5rem; border-right: 1px solid #EDEDED;">
-        TOTAL · {len(df)} URLs
-      </div>
-      <div><span style="color: #6F7782;">Clicks</span><br><strong style="font-size: 1.1rem;">{total_clicks:,}</strong></div>
-      <div><span style="color: #6F7782;">Impressions</span><br><strong style="font-size: 1.1rem;">{total_impr:,}</strong></div>
-      <div><span style="color: #6F7782;">Organic Traffic</span><br><strong style="font-size: 1.1rem;">{total_org:,}</strong></div>
-      <div><span style="color: #6F7782;">Organic Users</span><br><strong style="font-size: 1.1rem;">{total_org_users:,}</strong></div>
-      <div><span style="color: #6F7782;">Views</span><br><strong style="font-size: 1.1rem;">{total_views:,}</strong></div>
-      <div><span style="color: #6F7782;">Sessions</span><br><strong style="font-size: 1.1rem;">{total_sessions:,}</strong></div>
-      <div><span style="color: #6F7782;">Users</span><br><strong style="font-size: 1.1rem;">{total_users:,}</strong></div>
-    </div>
-    """
-    st.markdown(totals_html, unsafe_allow_html=True)
 
 # Action row
 act1, act2, _ = st.columns([1, 1, 6])
