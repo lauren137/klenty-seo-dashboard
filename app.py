@@ -408,7 +408,7 @@ st.dataframe(
     height=min(600, 60 + 35 * len(df)),
 )
 
-# ---- Totals row across tracked URLs ----
+# ---- Totals strip across tracked URLs ----
 if len(df) > 0:
     total_clicks = int(df["Clicks"].sum())
     total_impr = int(df["Impressions"].sum())
@@ -417,36 +417,33 @@ if len(df) > 0:
     total_views = int(df["Views"].sum())
     total_sessions = int(df["Sessions"].sum())
     total_users = int(df["Users"].sum())
-    # Weighted average position (by impressions)
-    pos_df = df[df["Position"].notna() & (df["Impressions"] > 0)]
-    if len(pos_df) > 0 and pos_df["Impressions"].sum() > 0:
-        avg_pos = (pos_df["Position"] * pos_df["Impressions"]).sum() / pos_df["Impressions"].sum()
-        avg_pos_str = f"{avg_pos:.1f}"
-    else:
-        avg_pos_str = "—"
-    avg_ctr = (total_clicks / total_impr * 100) if total_impr else 0
 
-    totals_df = pd.DataFrame([{
-        "URL": f"TOTAL ({len(df)} URLs)",
-        "Position": avg_pos_str,
-        "Clicks": f"{total_clicks:,}",
-        "Impressions": f"{total_impr:,}",
-        "CTR %": f"{avg_ctr:.2f}%",
-        "Organic Traffic": f"{total_org:,}",
-        "Organic Users": f"{total_org_users:,}",
-        "Views": f"{total_views:,}",
-        "Sessions": f"{total_sessions:,}",
-        "Users": f"{total_users:,}",
-        "Bounce %": "—",
-    }])
-    st.dataframe(
-        totals_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={"URL": st.column_config.TextColumn("URL", width="large")},
-        height=60,
-    )
-    st.caption("Totals row shows: sum of Clicks · Impressions · Organic Traffic · Organic Users · Views · Sessions · Users. Position is impression-weighted average. CTR % is recalculated from total clicks ÷ total impressions.")
+    totals_html = f"""
+    <div style="
+        background: #FAFAFB;
+        border: 1px solid #EDEDED;
+        border-radius: 10px;
+        padding: 1rem 1.25rem;
+        margin-top: 0.75rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1.75rem;
+        font-size: 0.9rem;
+        align-items: center;
+    ">
+      <div style="font-weight: 700; font-size: 0.95rem; color: #1E1F21; padding-right: 0.5rem; border-right: 1px solid #EDEDED;">
+        TOTAL · {len(df)} URLs
+      </div>
+      <div><span style="color: #6F7782;">Clicks</span><br><strong style="font-size: 1.1rem;">{total_clicks:,}</strong></div>
+      <div><span style="color: #6F7782;">Impressions</span><br><strong style="font-size: 1.1rem;">{total_impr:,}</strong></div>
+      <div><span style="color: #6F7782;">Organic Traffic</span><br><strong style="font-size: 1.1rem;">{total_org:,}</strong></div>
+      <div><span style="color: #6F7782;">Organic Users</span><br><strong style="font-size: 1.1rem;">{total_org_users:,}</strong></div>
+      <div><span style="color: #6F7782;">Views</span><br><strong style="font-size: 1.1rem;">{total_views:,}</strong></div>
+      <div><span style="color: #6F7782;">Sessions</span><br><strong style="font-size: 1.1rem;">{total_sessions:,}</strong></div>
+      <div><span style="color: #6F7782;">Users</span><br><strong style="font-size: 1.1rem;">{total_users:,}</strong></div>
+    </div>
+    """
+    st.markdown(totals_html, unsafe_allow_html=True)
 
 # Action row
 act1, act2, _ = st.columns([1, 1, 6])
