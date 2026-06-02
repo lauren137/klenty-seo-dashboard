@@ -388,56 +388,144 @@ df = df.sort_values(col, ascending=asc, na_position="last")
 
 st.markdown('<div class="section-title">Tracked URLs · Performance</div>', unsafe_allow_html=True)
 
-# ---- Append TOTAL row at the bottom (totals only for: Clicks, Impressions,
-#      Organic Traffic, Organic Users, Views, Sessions, Users) ----
+# ---- Custom HTML table with sticky header + sticky TOTAL row ----
 import numpy as np
+
+def _fmt_int(v):
+    if pd.isna(v) or v is None: return "—"
+    return f"{int(v):,}"
+
+def _fmt_float1(v):
+    if pd.isna(v) or v is None: return "—"
+    return f"{v:.1f}"
+
+def _fmt_pct(v):
+    if pd.isna(v) or v is None: return "—"
+    return f"{v:.2f}%"
+
+def _fmt_pct1(v):
+    if pd.isna(v) or v is None: return "—"
+    return f"{v:.1f}%"
+
+# Build display rows (URL rows + TOTAL row)
+def render_cell(value, formatter):
+    return f"<td class='num'>{formatter(value)}</td>"
+
+rows_html = []
+for _, r in df.iterrows():
+    rows_html.append(
+        "<tr>"
+        f"<td class='url'>{r['URL']}</td>"
+        f"<td class='num'>{_fmt_float1(r['Position'])}</td>"
+        f"<td class='num'>{_fmt_int(r['Clicks'])}</td>"
+        f"<td class='num'>{_fmt_int(r['Impressions'])}</td>"
+        f"<td class='num'>{_fmt_pct(r['CTR %'])}</td>"
+        f"<td class='num'>{_fmt_int(r['Organic Traffic'])}</td>"
+        f"<td class='num'>{_fmt_int(r['Organic Users'])}</td>"
+        f"<td class='num'>{_fmt_int(r['Views'])}</td>"
+        f"<td class='num'>{_fmt_int(r['Sessions'])}</td>"
+        f"<td class='num'>{_fmt_int(r['Users'])}</td>"
+        f"<td class='num'>{_fmt_pct1(r['Bounce %'])}</td>"
+        "</tr>"
+    )
+
+# TOTAL row — only for columns the user requested
+total_row_html = ""
 if len(df) > 0:
-    total_row = pd.DataFrame([{
-        "URL": f"TOTAL · {len(df)} URLs",
-        "Position": np.nan,           # no total
-        "Clicks": int(df["Clicks"].sum()),
-        "Impressions": int(df["Impressions"].sum()),
-        "CTR %": np.nan,              # no total
-        "Organic Traffic": int(df["Organic Traffic"].sum()),
-        "Organic Users": int(df["Organic Users"].sum()),
-        "Views": int(df["Views"].sum()),
-        "Sessions": int(df["Sessions"].sum()),
-        "Users": int(df["Users"].sum()),
-        "Bounce %": np.nan,           # no total
-    }])
-    df_with_total = pd.concat([df, total_row], ignore_index=True)
-else:
-    df_with_total = df
+    total_row_html = (
+        "<tr class='total-row'>"
+        f"<td class='url'>TOTAL · {len(df)} URLs</td>"
+        "<td class='num'>—</td>"
+        f"<td class='num'>{int(df['Clicks'].sum()):,}</td>"
+        f"<td class='num'>{int(df['Impressions'].sum()):,}</td>"
+        "<td class='num'>—</td>"
+        f"<td class='num'>{int(df['Organic Traffic'].sum()):,}</td>"
+        f"<td class='num'>{int(df['Organic Users'].sum()):,}</td>"
+        f"<td class='num'>{int(df['Views'].sum()):,}</td>"
+        f"<td class='num'>{int(df['Sessions'].sum()):,}</td>"
+        f"<td class='num'>{int(df['Users'].sum()):,}</td>"
+        "<td class='num'>—</td>"
+        "</tr>"
+    )
 
-def _highlight_total(row):
-    if str(row.get("URL", "")).startswith("TOTAL"):
-        return [
-            "background-color: #F0F1F3; font-weight: 700; "
-            "border-top: 2px solid #D8D9DC; color: #1E1F21;"
-        ] * len(row)
-    return [""] * len(row)
+table_html = f"""
+<style>
+  .seo-table-wrap {{
+    max-height: 560px;
+    overflow-y: auto;
+    border: 1px solid #EDEDED;
+    border-radius: 10px;
+    background: white;
+    position: relative;
+  }}
+  table.seo-table {{
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+    color: #1E1F21;
+  }}
+  table.seo-table thead th {{
+    background: #FAFAFB;
+    color: #6F7782;
+    font-weight: 600;
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 0.75rem 0.75rem;
+    text-align: right;
+    border-bottom: 1px solid #EDEDED;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    white-space: nowrap;
+  }}
+  table.seo-table thead th:first-child {{ text-align: left; }}
+  table.seo-table tbody td {{
+    padding: 0.55rem 0.75rem;
+    border-bottom: 1px solid #F4F5F6;
+    white-space: nowrap;
+  }}
+  table.seo-table tbody td.url {{ text-align: left; color: #1E1F21; }}
+  table.seo-table tbody td.num {{ text-align: right; font-variant-numeric: tabular-nums; }}
+  table.seo-table tbody tr:hover td {{ background: #FAFAFB; }}
+  /* Sticky TOTAL row pinned to the bottom of the scroll viewport */
+  table.seo-table tbody tr.total-row td {{
+    position: sticky;
+    bottom: 0;
+    background: #F0F1F3 !important;
+    font-weight: 700;
+    border-top: 2px solid #D8D9DC;
+    border-bottom: none;
+    z-index: 4;
+    color: #1E1F21;
+  }}
+</style>
 
-styled_df = df_with_total.style.apply(_highlight_total, axis=1)
-
-st.dataframe(
-    styled_df,
-    use_container_width=True,
-    hide_index=True,
-    column_config={
-        "URL": st.column_config.TextColumn("URL", width="large"),
-        "Position": st.column_config.NumberColumn("Position", format="%.1f"),
-        "Clicks": st.column_config.NumberColumn("Clicks", format="%d"),
-        "Impressions": st.column_config.NumberColumn("Impressions", format="%d"),
-        "CTR %": st.column_config.NumberColumn("CTR %", format="%.2f%%"),
-        "Organic Traffic": st.column_config.NumberColumn("Organic Traffic", format="%d", help="GA4 sessions from Organic Search"),
-        "Organic Users": st.column_config.NumberColumn("Organic Users", format="%d", help="GA4 users from Organic Search"),
-        "Views": st.column_config.NumberColumn("Views", format="%d"),
-        "Sessions": st.column_config.NumberColumn("Sessions", format="%d"),
-        "Users": st.column_config.NumberColumn("Users", format="%d"),
-        "Bounce %": st.column_config.NumberColumn("Bounce %", format="%.1f%%"),
-    },
-    height=min(650, 60 + 35 * len(df_with_total)),
-)
+<div class="seo-table-wrap">
+  <table class="seo-table">
+    <thead>
+      <tr>
+        <th>URL</th>
+        <th>Position</th>
+        <th>Clicks</th>
+        <th>Impressions</th>
+        <th>CTR %</th>
+        <th>Organic Traffic</th>
+        <th>Organic Users</th>
+        <th>Views</th>
+        <th>Sessions</th>
+        <th>Users</th>
+        <th>Bounce %</th>
+      </tr>
+    </thead>
+    <tbody>
+      {''.join(rows_html)}
+      {total_row_html}
+    </tbody>
+  </table>
+</div>
+"""
+st.markdown(table_html, unsafe_allow_html=True)
 
 # Action row
 act1, act2, _ = st.columns([1, 1, 6])
