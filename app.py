@@ -943,76 +943,169 @@ if st.session_state.get("show_summary"):
             st.session_state["show_summary"] = False
             st.rerun()
 
-# ---------------- Per-URL trend drawer ----------------
-st.markdown('<div class="section-title">URL Trend Explorer</div>', unsafe_allow_html=True)
-selected = st.selectbox("Pick a URL to see its daily trend", options=all_urls)
-if selected and days >= 2:
-    with st.spinner("Loading trend..."):
-        trend = fetch_trend(selected, start, end)
+# ---------------- URL Trend Inspector ----------------
+st.markdown('<div class="section-title">URL Trend Inspector</div>', unsafe_allow_html=True)
+
+ti1, ti2 = st.columns([2, 3])
+with ti1:
+    picked = st.selectbox(
+        "Pick a tracked URL",
+        options=["— or paste a URL below —"] + all_urls,
+        key="trend_picker",
+    )
+with ti2:
+    custom_path = st.text_input(
+        "Or paste any klenty.com URL",
+        placeholder="/blog/your-page/ or https://www.klenty.com/blog/...",
+        key="trend_custom",
+    )
+
+# Resolve target URL — custom input wins if provided
+target = None
+if custom_path.strip():
+    path = custom_path.strip()
+    if path.startswith("http"):
+        from urllib.parse import urlparse
+        path = urlparse(path).path
+    if not path.startswith("/"):
+        path = "/" + path
+    if not path.endswith("/"):
+        path = path + "/"
+    target = path
+elif picked != "— or paste a URL below —":
+    target = picked
+
+if days < 2:
+    st.info("Pick a range of 7d or more to see a daily trend.")
+elif target:
+    with st.spinner(f"Loading trend for {target}..."):
+        trend = fetch_trend(target, start, end)
+
     if not trend:
-        st.info("No trend data available for this URL in this range.")
+        st.warning(f"No trend data available for `{target}` in this range. Check the URL or try a wider range.")
     else:
         tdf = pd.DataFrame(trend)
-        tab1, tab2, tab3 = st.tabs(["Clicks & Impressions", "Position", "Users & Sessions"])
 
-        with tab1:
-            fig = go.Figure()
-            if "clicks" in tdf:
-                fig.add_trace(go.Scatter(
-                    x=tdf["date"], y=tdf["clicks"], name="Clicks",
-                    mode="lines+markers", line=dict(color="#F06A6A", width=2),
-                ))
-            if "impressions" in tdf:
-                fig.add_trace(go.Scatter(
-                    x=tdf["date"], y=tdf["impressions"], name="Impressions",
-                    mode="lines+markers", line=dict(color="#4573D2", width=2),
-                    yaxis="y2",
-                ))
-            fig.update_layout(
-                height=350, margin=dict(l=20, r=20, t=20, b=20),
-                plot_bgcolor="white", paper_bgcolor="white",
-                yaxis=dict(title="Clicks", showgrid=True, gridcolor="#EDEDED"),
-                yaxis2=dict(title="Impressions", overlaying="y", side="right", showgrid=False),
-                legend=dict(orientation="h", y=-0.15),
-            )
-            st.plotly_chart(fig, use_container_width=True)
+        # Toggle: Position vs Traffic
+        metric_choice = st.radio(
+            "Metric",
+            ["📈 Position", "🚦 Traffic"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key="trend_metric",
+        )
 
-        with tab2:
-            if "position" in tdf:
-                fig = go.Figure(go.Scatter(
+        # ---- Trend direction helper ----
+        def trend_summary(series, lower_is_better=False):
+            vals = [v for v in series if v is not None and not pd.isna(v) and v > 0]
+            if len(vals) < 2:
+                return None, None, None
+            half = max(1, len(vals) // 2)
+            first_avg = sum(vals[:half]) / half
+            second_avg = sum(vals[-half:]) / half
+            if first_avg == 0:
+                return None, None, None
+            change_pct = (second_avg - first_avg) / first_avg * 100
+            if lower_is_better:
+                improving = change_pct < 0
+            else:
+                improving = change_pct > 0
+            return first_avg, second_avg, (change_pct, improving)
+
+        if metric_choice == "📈 Position":
+            if "position" not in tdf or tdf["position"].dropna().empty:
+                st.info("No position data for this URL in this range.")
+            else:
+                first, second, ch = trend_summary(tdf["position"].tolist(), lower_is_better=True)
+                if ch is not None:
+                    change_pct, improving = ch
+                    if improving:
+                        verdict = f"<span style='color:#14A37F; font-weight:700;'>▲ Improving</span>"
+                        explain = "Position is moving up in search results (lower number = better)."
+                    elif abs(change_pct) < 1:
+                        verdict = f"<span style='color:#6F7782; font-weight:700;'>● Stable</span>"
+                        explain = "Position is holding steady."
+                    else:
+                        verdict = f"<span style='color:#E8384F; font-weight:700;'>▼ Declining</span>"
+                        explain = "Position is dropping in search results (higher number = worse)."
+                    st.markdown(
+                        f"<div style='background:white; border:1px solid #EDEDED; border-radius:10px; padding:1rem 1.25rem; margin-bottom:0.75rem;'>"
+                        f"<div style='font-size:0.7rem; color:#6F7782; text-transform:uppercase; letter-spacing:0.05em;'>Position trend for <code>{target}</code></div>"
+                        f"<div style='font-size:1.5rem; margin-top:0.3rem;'>{verdict} &nbsp; <span style='color:#1E1F21;'>{first:.1f} → {second:.1f}</span></div>"
+                        f"<div style='color:#6F7782; font-size:0.85rem; margin-top:0.3rem;'>{explain}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
                     x=tdf["date"], y=tdf["position"], name="Position",
-                    mode="lines+markers", line=dict(color="#14A37F", width=2),
+                    mode="lines+markers",
+                    line=dict(color="#14A37F", width=3),
+                    marker=dict(size=8, color="#14A37F"),
+                    fill="tozeroy",
+                    fillcolor="rgba(20, 163, 127, 0.05)",
                 ))
                 fig.update_layout(
-                    height=350, margin=dict(l=20, r=20, t=20, b=20),
+                    height=380, margin=dict(l=20, r=20, t=20, b=20),
                     plot_bgcolor="white", paper_bgcolor="white",
-                    yaxis=dict(title="Position (lower = better)", autorange="reversed", gridcolor="#EDEDED"),
+                    yaxis=dict(title="Position (lower = better)", autorange="reversed", gridcolor="#EDEDED", zeroline=False),
+                    xaxis=dict(showgrid=False),
                 )
                 st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No position data for this URL in this range.")
 
-        with tab3:
-            fig = go.Figure()
-            if "users" in tdf:
-                fig.add_trace(go.Scatter(
-                    x=tdf["date"], y=tdf["users"], name="Users",
-                    mode="lines+markers", line=dict(color="#F06A6A", width=2),
-                ))
-            if "sessions" in tdf:
+        else:  # Traffic
+            # Use sessions as the primary traffic metric, with users as overlay
+            if "sessions" not in tdf or tdf["sessions"].dropna().empty:
+                st.info("No GA4 traffic data for this URL in this range.")
+            else:
+                first, second, ch = trend_summary(tdf["sessions"].tolist(), lower_is_better=False)
+                if ch is not None:
+                    change_pct, improving = ch
+                    if improving and change_pct > 5:
+                        verdict = f"<span style='color:#14A37F; font-weight:700;'>▲ Growing</span>"
+                        explain = f"Traffic up {abs(change_pct):.1f}% comparing the back half of the period to the front half."
+                    elif abs(change_pct) < 5:
+                        verdict = f"<span style='color:#6F7782; font-weight:700;'>● Stable</span>"
+                        explain = "Traffic is holding within ±5%."
+                    else:
+                        verdict = f"<span style='color:#E8384F; font-weight:700;'>▼ Declining</span>"
+                        explain = f"Traffic down {abs(change_pct):.1f}% comparing the back half of the period to the front half."
+                    st.markdown(
+                        f"<div style='background:white; border:1px solid #EDEDED; border-radius:10px; padding:1rem 1.25rem; margin-bottom:0.75rem;'>"
+                        f"<div style='font-size:0.7rem; color:#6F7782; text-transform:uppercase; letter-spacing:0.05em;'>Traffic trend for <code>{target}</code></div>"
+                        f"<div style='font-size:1.5rem; margin-top:0.3rem;'>{verdict} &nbsp; <span style='color:#1E1F21;'>{first:.0f} → {second:.0f} sessions/day avg</span></div>"
+                        f"<div style='color:#6F7782; font-size:0.85rem; margin-top:0.3rem;'>{explain}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                fig = go.Figure()
                 fig.add_trace(go.Scatter(
                     x=tdf["date"], y=tdf["sessions"], name="Sessions",
-                    mode="lines+markers", line=dict(color="#4573D2", width=2),
+                    mode="lines+markers",
+                    line=dict(color="#F06A6A", width=3),
+                    marker=dict(size=8, color="#F06A6A"),
+                    fill="tozeroy",
+                    fillcolor="rgba(240, 106, 106, 0.08)",
                 ))
-            fig.update_layout(
-                height=350, margin=dict(l=20, r=20, t=20, b=20),
-                plot_bgcolor="white", paper_bgcolor="white",
-                yaxis=dict(gridcolor="#EDEDED"),
-                legend=dict(orientation="h", y=-0.15),
-            )
-            st.plotly_chart(fig, use_container_width=True)
-elif days < 2:
-    st.info("Pick a range of 7d or more to see a daily trend.")
+                if "users" in tdf:
+                    fig.add_trace(go.Scatter(
+                        x=tdf["date"], y=tdf["users"], name="Users",
+                        mode="lines+markers",
+                        line=dict(color="#4573D2", width=2, dash="dot"),
+                        marker=dict(size=6),
+                    ))
+                fig.update_layout(
+                    height=380, margin=dict(l=20, r=20, t=20, b=20),
+                    plot_bgcolor="white", paper_bgcolor="white",
+                    yaxis=dict(title="Traffic per day", gridcolor="#EDEDED"),
+                    xaxis=dict(showgrid=False),
+                    legend=dict(orientation="h", y=-0.15),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("Pick a tracked URL above or paste any klenty.com URL to see its trend.")
 
 st.markdown(
     '<div class="footnote">Data pulled live from Google Search Console + Google Analytics 4 · '
