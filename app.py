@@ -466,14 +466,14 @@ table_html = f"""
   }}
   table.seo-table thead th {{
     background: #FAFAFB;
-    color: #6F7782;
-    font-weight: 600;
-    font-size: 0.7rem;
-    letter-spacing: 0.05em;
+    color: #1E1F21;
+    font-weight: 700;
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
     padding: 0.75rem 0.75rem;
     text-align: right;
-    border-bottom: 1px solid #EDEDED;
+    border-bottom: 1px solid #D8D9DC;
     position: sticky;
     top: 0;
     z-index: 5;
