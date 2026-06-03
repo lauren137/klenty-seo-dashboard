@@ -1485,20 +1485,166 @@ with tab3:
         """
         st.markdown(table_html, unsafe_allow_html=True)
 
-        # Export
-        csv_llm = df_llm.to_csv(index=False).encode()
-        st.download_button(
-            "⬇ Export LLM Traffic as CSV",
-            csv_llm,
-            file_name=f"klenty-llm-traffic-{start}-to-{end}.csv",
-            mime="text/csv",
-        )
+        # Action row
+        act_llm1, act_llm2, _ = st.columns([1, 1, 6])
+        with act_llm1:
+            csv_llm = df_llm.to_csv(index=False).encode()
+            st.download_button(
+                "⬇ Export CSV",
+                csv_llm,
+                file_name=f"klenty-llm-traffic-{start}-to-{end}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+        with act_llm2:
+            if st.button("📋 Generate LLM Summary", use_container_width=True, type="primary", key="gen_llm_sum"):
+                st.session_state["show_llm_summary"] = True
 
     st.caption(
         "LLM traffic is identified by GA4 sessionSource matching known AI tool domains "
-        "(chatgpt.com, claude.ai, perplexity.ai, gemini.google.com, copilot.microsoft.com, etc.). "
-        "Note: many LLMs use citation links, so this captures explicit referrals — not every page view triggered by an AI answer."
+        "(chatgpt.com, claude.ai, perplexity.ai, gemini.google.com). "
+        "This captures explicit citation clicks — not every page view triggered by an AI answer."
     )
+
+    # ---------------- LLM Summary section ----------------
+    if st.session_state.get("show_llm_summary"):
+        # Pull prior period for delta
+        with st.spinner("Building LLM summary..."):
+            prior_llm_overview = fetch_llm_overview(p_start, p_end)
+            prior_llm_per_page = fetch_llm_per_page(tuple(all_urls), p_start, p_end)
+
+        prior_total = prior_llm_overview["total_sessions"]
+        prior_top_llm = max(prior_llm_overview["by_llm"].items(), key=lambda x: x[1]["sessions"], default=("", {"sessions": 0}))
+
+        def _safe_pct(c, p):
+            if not p: return None
+            return (c - p) / p * 100
+
+        delta_total = _safe_pct(total_llm_sessions, prior_total)
+
+        # Identify URLs with traffic and without
+        urls_with_llm = [(u, llm_per_page[u]["total"]) for u in all_urls if llm_per_page.get(u, {}).get("total", 0) > 0]
+        urls_with_llm.sort(key=lambda x: -x[1])
+        urls_without_llm = [u for u in all_urls if llm_per_page.get(u, {}).get("total", 0) == 0]
+
+        # Per-LLM deltas
+        per_llm_lines = []
+        for name in llm_names:
+            curr = by_llm[name]["sessions"]
+            prev = prior_llm_overview["by_llm"].get(name, {}).get("sessions", 0)
+            dp = _safe_pct(curr, prev)
+            verdict = "—"
+            if dp is not None:
+                arrow = "▲" if dp > 0 else ("▼" if dp < 0 else "•")
+                verdict = f"{arrow} {abs(dp):.1f}% vs prior"
+            per_llm_lines.append(f"- **{name}**: {curr:,} sessions, {by_llm[name]['users']:,} users · {verdict}")
+
+        # ---- Build markdown ----
+        L = []
+        L.append("# Klenty LLM Traffic Summary")
+        L.append(f"_Period: **{start} → {end}** ({days} days) · comparing to prior {days}d_")
+        L.append("")
+
+        # TL;DR
+        L.append("## TL;DR")
+        if delta_total is not None:
+            verb = "up" if delta_total > 0 else ("down" if delta_total < 0 else "flat")
+            L.append(f"- LLM traffic is **{verb} {abs(delta_total):.1f}%** vs prior period — {total_llm_sessions:,} sessions ({total_llm_users:,} users)")
+        else:
+            L.append(f"- LLM traffic: **{total_llm_sessions:,} sessions, {total_llm_users:,} users**")
+        L.append(f"- Top source: **{top_llm_name}** ({top_llm_data['sessions']:,} sessions)")
+        L.append(f"- LLMs represent **{pct_of_traffic:.2f}%** of total site sessions")
+        L.append(f"- **{len(urls_with_llm)}** of {len(all_urls)} tracked URLs received at least one LLM citation; **{len(urls_without_llm)}** got zero")
+        L.append("")
+
+        # Per-LLM breakdown
+        L.append("## By LLM source")
+        L.extend(per_llm_lines)
+        L.append("")
+
+        # Top URLs
+        L.append("## Top tracked URLs by LLM citations")
+        if urls_with_llm:
+            for u, total in urls_with_llm[:10]:
+                m = llm_per_page[u]
+                sources = ", ".join(f"{n}={m[n]}" for n in llm_names if m.get(n, 0) > 0)
+                L.append(f"- `{u}` — **{total}** sessions ({sources})")
+        else:
+            L.append("- _No tracked URLs received LLM citations in this period._")
+        L.append("")
+
+        # Zero-LLM opportunities
+        if urls_without_llm:
+            L.append(f"## URLs with zero LLM traffic ({len(urls_without_llm)})")
+            L.append("These pages aren't being cited by AI tools. Candidates for LLM-optimization:")
+            for u in urls_without_llm[:10]:
+                L.append(f"- `{u}`")
+            if len(urls_without_llm) > 10:
+                L.append(f"- _…and {len(urls_without_llm) - 10} more_")
+            L.append("")
+
+        # Recommendations
+        L.append("## How to improve LLM citation traffic")
+        L.append("LLMs cite content that's *structured*, *answer-first*, and *backed by authority signals*. Specific tactics:")
+        L.append("")
+        L.append("### 1. Lead with the answer (above the fold)")
+        L.append("- The first 75–100 words should directly answer the question implied by the URL/title.")
+        L.append("- LLMs grab the opening paragraph as their citation snippet. Don't bury the answer under intro fluff.")
+        L.append("- Example: For `/blog/what-is-apollo-io/`, the first line should be: *\"Apollo.io is a B2B sales engagement platform that combines a 275M+ contact database with email, dialer, and LinkedIn outreach in one tool.\"*")
+        L.append("")
+        L.append("### 2. Use FAQ schema + question-style headings")
+        L.append("- Add JSON-LD `FAQPage` schema to every blog post. LLMs parse this to extract Q&A pairs cleanly.")
+        L.append("- Use H2/H3 as questions matching real search queries: *\"How much does Apollo cost?\"*, *\"What does a parallel dialer do?\"*")
+        L.append("- Add a 40–60 word direct answer below each H2 question.")
+        L.append("")
+        L.append("### 3. Structured comparison tables")
+        L.append("- For `/blog/X-alternatives/` and `/compare/X/` pages: include a clear comparison table (feature, X, alternative, Klenty).")
+        L.append("- LLMs frequently cite tables verbatim when answering \"X vs Y\" questions.")
+        L.append("")
+        L.append("### 4. Statistics + named sources")
+        L.append("- Embed original Klenty data (\"based on 12M outbound emails sent through Klenty in 2025…\").")
+        L.append("- Cite named experts/customers with their title + company. LLMs reward verifiable claims with citations.")
+        L.append("")
+        L.append("### 5. Build off-site signals LLMs trust")
+        L.append("- Reddit: write helpful, non-promotional answers in r/sales, r/SaaS, r/sdr that link to your blog. LLMs heavily train on Reddit.")
+        L.append("- Quora: same playbook.")
+        L.append("- YouTube: short explainer videos with the keyword in the title — LLMs scrape video transcripts.")
+        L.append("- Wikipedia: get Klenty mentioned on relevant pages (sales engagement, dialers) with citations.")
+        L.append("- GitHub: open-source any internal tool, README links to klenty.com.")
+        L.append("")
+        L.append("### 6. Add an llms.txt file")
+        L.append("- Create `/llms.txt` at klenty.com root explaining what Klenty is, key URLs, and prompts to AI assistants.")
+        L.append("- Emerging standard ([llmstxt.org](https://llmstxt.org)) for guiding AI crawlers.")
+        L.append("")
+        L.append("### 7. E-E-A-T signals on every blog")
+        L.append("- Author bio with LinkedIn, photo, role at Klenty.")
+        L.append("- Date of last update visible.")
+        L.append("- Internal links to /about-us/ and team pages.")
+        L.append("- HTTPS, fast page load, clear contact info — LLMs use trust signals like Google does.")
+        L.append("")
+        L.append("### 8. Monitor + iterate")
+        L.append("- Re-run this report every 2–4 weeks; the URLs with growing LLM citations are your template — replicate their structure.")
+        L.append("- Direct ChatGPT/Perplexity/Claude with your target queries and see if Klenty appears. If not, the answer-first structure is missing.")
+
+        llm_summary_md = "\n".join(L)
+
+        st.markdown('<div class="section-title">Generated LLM Summary</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown(llm_summary_md)
+
+        dl_a, dl_b, _ = st.columns([1, 1, 6])
+        with dl_a:
+            st.download_button(
+                "⬇ Download .md",
+                llm_summary_md.encode(),
+                file_name=f"klenty-llm-summary-{start}-to-{end}.md",
+                mime="text/markdown",
+                use_container_width=True,
+            )
+        with dl_b:
+            if st.button("Hide summary", type="secondary", use_container_width=True, key="hide_llm_sum"):
+                st.session_state["show_llm_summary"] = False
+                st.rerun()
 
 
 st.markdown(

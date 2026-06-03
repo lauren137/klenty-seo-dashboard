@@ -182,6 +182,67 @@ def build_narrative(period_label: str, overview: dict, prior_ov: dict,
     return "\n\n".join(paragraphs)
 
 
+def build_llm_blocks(llm_overview: dict, prior_llm_overview: dict,
+                     llm_per_page: dict) -> list[dict]:
+    """Returns a list of Slack Block Kit blocks for the LLM Traffic section."""
+    blocks = []
+    total = llm_overview.get("total_sessions", 0)
+    prior_total = prior_llm_overview.get("total_sessions", 0)
+    total_users = llm_overview.get("total_users", 0)
+    by_llm = llm_overview.get("by_llm", {})
+
+    if not total and not prior_total:
+        return []  # nothing to report
+
+    def chg(c, p):
+        if not p: return ""
+        d = (c - p) / p * 100
+        arrow = "🔺" if d > 0 else "🔻"
+        return f"  {arrow} {abs(d):.1f}%"
+
+    blocks.append({"type": "header", "text": {"type": "plain_text", "text": "🤖 LLM Traffic"}})
+    blocks.append({"type": "section", "text": {"type": "mrkdwn",
+                   "text": f"*{total:,}* sessions from AI tools{chg(total, prior_total)} · *{total_users:,}* users"}})
+
+    # Per-LLM breakdown
+    llm_lines = []
+    for name, m in by_llm.items():
+        sessions = m.get("sessions", 0)
+        if sessions == 0:
+            continue
+        prev = prior_llm_overview.get("by_llm", {}).get(name, {}).get("sessions", 0)
+        llm_lines.append(f"• *{name}*: {sessions:,} sessions{chg(sessions, prev)}")
+    if llm_lines:
+        blocks.append({"type": "section", "text": {"type": "mrkdwn",
+                       "text": "*By source*\n" + "\n".join(llm_lines)}})
+
+    # Top URLs by LLM citations
+    ranked = sorted(
+        [(u, m) for u, m in llm_per_page.items() if m.get("total", 0) > 0],
+        key=lambda x: -x[1]["total"],
+    )
+    if ranked:
+        top_lines = []
+        for u, m in ranked[:5]:
+            sources = ", ".join(f"{k}={v}" for k, v in m.items() if k not in ("total", "users") and v > 0)
+            top_lines.append(f"• `{u}` — *{m['total']}* ({sources})")
+        blocks.append({"type": "section", "text": {"type": "mrkdwn",
+                       "text": "*Top cited URLs (this week)*\n" + "\n".join(top_lines)}})
+
+    # Quick tips
+    zero_count = sum(1 for m in llm_per_page.values() if m.get("total", 0) == 0)
+    tip_lines = []
+    if zero_count > 0:
+        tip_lines.append(f"• *{zero_count}* of {len(llm_per_page)} tracked URLs got zero LLM citations — add FAQ schema + answer-first opening paragraph")
+    tip_lines.append("• LLMs love structured Q&A: add H2 question-style headings with 40–60 word direct answers")
+    tip_lines.append("• Build Reddit / Quora / Wikipedia citations — LLMs heavily reference these")
+    tip_lines.append("• Add `/llms.txt` at klenty.com to guide AI crawlers ([llmstxt.org](https://llmstxt.org))")
+    blocks.append({"type": "section", "text": {"type": "mrkdwn",
+                   "text": "*How to grow LLM citations*\n" + "\n".join(tip_lines)}})
+
+    return blocks
+
+
 def build_blocks(period_label: str, prior_label: str, overview: dict, prior_ov: dict,
                  movers: list[dict], fix_groups: dict, deep_link: str | None) -> list[dict]:
     g = overview["gsc"]; pg = prior_ov["gsc"]
@@ -264,6 +325,9 @@ def build_blocks(period_label: str, prior_label: str, overview: dict, prior_ov: 
             fix_text += f"\n{emoji} *{label}* ({len(urls)} URLs)\n_{fix}_\nAffected: {url_list}\n"
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": fix_text}})
 
+    # ---- LLM Traffic section ----
+    # (Caller appends llm blocks before this footer if data exists)
+
     # ---- Footer ----
     if deep_link:
         blocks.append({"type": "context", "elements": [
@@ -314,6 +378,12 @@ def main():
     gsc_prior = gc.gsc_page_metrics(urls, p_start, p_end)
     ga4_prior = gc.ga4_page_metrics(urls, p_start, p_end)
 
+    # LLM data
+    print("Fetching LLM traffic...")
+    llm_overview = gc.ga4_llm_overview(start, end)
+    prior_llm_overview = gc.ga4_llm_overview(p_start, p_end)
+    llm_per_page = gc.ga4_llm_traffic_by_page(urls, start, end)
+
     # Build per-URL records + diagnoses
     movers = []
     fix_groups: dict[str, dict] = {}
@@ -343,6 +413,19 @@ def main():
     ))
 
     blocks = build_blocks(period_label, prior_label, overview, prior_ov, movers, fix_groups_sorted, DASHBOARD_URL)
+
+    # Insert LLM section before the footer context block (last block if dashboard link exists)
+    llm_blocks = build_llm_blocks(llm_overview, prior_llm_overview, llm_per_page)
+    if llm_blocks:
+        # Pop the existing footer (dashboard link) if present so we can re-append it last
+        footer = None
+        if DASHBOARD_URL and blocks and blocks[-1].get("type") == "context":
+            footer = blocks.pop()
+        blocks.append({"type": "divider"})
+        blocks.extend(llm_blocks)
+        if footer:
+            blocks.append(footer)
+
     post_to_slack(blocks)
 
 
