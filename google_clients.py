@@ -9,7 +9,7 @@ from google.auth.transport.requests import Request
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import (
     RunReportRequest, DateRange, Metric, Dimension,
-    Filter, FilterExpression, FilterExpressionList, OrderBy,
+    Filter, FilterExpression, FilterExpressionList,
 )
 from googleapiclient.discovery import build
 
@@ -221,7 +221,9 @@ def ga4_all_pages(start: str, end: str, limit: int = 500) -> dict[str, dict]:
     """Top N pages site-wide by sessions. Returns {path: {views, sessions, users, bounce, organic}}."""
     client = _ga4_client()
 
-    # Overall metrics
+    # Fetch a large pool of pages, sort + truncate client-side
+    # (avoids SDK version differences around OrderBy class location)
+    pool_size = max(limit * 5, 1000)
     req = RunReportRequest(
         property=f"properties/{GA4_PROPERTY_ID}",
         date_ranges=[DateRange(start_date=start, end_date=end)],
@@ -232,19 +234,31 @@ def ga4_all_pages(start: str, end: str, limit: int = 500) -> dict[str, dict]:
             Metric(name="totalUsers"),
             Metric(name="bounceRate"),
         ],
-        order_bys=[OrderBy(metric=OrderBy.MetricOrderBy(metric_name="sessions"), desc=True)],
-        limit=limit,
+        limit=pool_size,
     )
     resp = client.run_report(req)
-    by_page = {}
+
+    # Collect all rows, sort by sessions DESC, take top `limit`
+    rows = []
     for row in resp.rows:
-        path = row.dimension_values[0].value
+        rows.append((
+            row.dimension_values[0].value,
+            int(float(row.metric_values[0].value)),  # views
+            int(float(row.metric_values[1].value)),  # sessions
+            int(float(row.metric_values[2].value)),  # users
+            float(row.metric_values[3].value) * 100, # bounce
+        ))
+    rows.sort(key=lambda r: -r[2])  # sort by sessions desc
+    rows = rows[:limit]
+
+    by_page = {}
+    for path, views, sessions, users, bounce in rows:
         norm = path if path.endswith("/") else path + "/"
         by_page[norm] = {
-            "views": int(float(row.metric_values[0].value)),
-            "sessions": int(float(row.metric_values[1].value)),
-            "users": int(float(row.metric_values[2].value)),
-            "bounce": float(row.metric_values[3].value) * 100,
+            "views": views,
+            "sessions": sessions,
+            "users": users,
+            "bounce": bounce,
             "organic": 0,
         }
 
