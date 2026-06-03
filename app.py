@@ -226,7 +226,7 @@ with st.sidebar:
     st.markdown("### Sort by")
     sort_col = st.selectbox(
         "Sort",
-        ["Clicks ↓", "Impressions ↓", "Position ↑", "CTR ↓", "Organic Traffic ↓", "Sessions ↓", "Views ↓", "Page A→Z"],
+        ["Clicks ↓", "Impressions ↓", "Position ↑", "CTR ↓", "Organic Traffic ↓", "Users ↓", "Sessions ↓", "Views ↓", "Page A→Z"],
         label_visibility="collapsed",
     )
 
@@ -363,9 +363,9 @@ for u in all_urls:
         "Impressions": m["impressions"],
         "CTR %": round(m["ctr"], 2),
         "Organic Traffic": m["organic"],
-        "Organic Users": m["organic_users"],
         "Views": m["views"],
         "Sessions": m["sessions"],
+        "Users": m["users"],
         "Bounce %": round(m["bounce"], 1),
     })
 df = pd.DataFrame(rows)
@@ -377,6 +377,7 @@ sort_map = {
     "Position ↑": ("Position", True),
     "CTR ↓": ("CTR %", False),
     "Organic Traffic ↓": ("Organic Traffic", False),
+    "Users ↓": ("Users", False),
     "Sessions ↓": ("Sessions", False),
     "Views ↓": ("Views", False),
     "Page A→Z": ("URL", True),
@@ -419,9 +420,9 @@ for _, r in df.iterrows():
         f"<td class='num'>{_fmt_int(r['Impressions'])}</td>"
         f"<td class='num'>{_fmt_pct(r['CTR %'])}</td>"
         f"<td class='num'>{_fmt_int(r['Organic Traffic'])}</td>"
-        f"<td class='num'>{_fmt_int(r['Organic Users'])}</td>"
         f"<td class='num'>{_fmt_int(r['Views'])}</td>"
         f"<td class='num'>{_fmt_int(r['Sessions'])}</td>"
+        f"<td class='num'>{_fmt_int(r['Users'])}</td>"
         f"<td class='num'>{_fmt_pct1(r['Bounce %'])}</td>"
         "</tr>"
     )
@@ -437,9 +438,9 @@ if len(df) > 0:
         f"<td class='num'>{int(df['Impressions'].sum()):,}</td>"
         "<td class='num'>—</td>"
         f"<td class='num'>{int(df['Organic Traffic'].sum()):,}</td>"
-        f"<td class='num'>{int(df['Organic Users'].sum()):,}</td>"
         f"<td class='num'>{int(df['Views'].sum()):,}</td>"
         f"<td class='num'>{int(df['Sessions'].sum()):,}</td>"
+        f"<td class='num'>{int(df['Users'].sum()):,}</td>"
         "<td class='num'>—</td>"
         "</tr>"
     )
@@ -507,9 +508,9 @@ table_html = f"""
         <th>Impressions</th>
         <th>CTR %</th>
         <th>Organic Traffic</th>
-        <th>Organic Users</th>
         <th>Views</th>
         <th>Sessions</th>
+        <th>Users</th>
         <th>Bounce %</th>
       </tr>
     </thead>
