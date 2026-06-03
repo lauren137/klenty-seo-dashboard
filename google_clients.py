@@ -533,11 +533,6 @@ LLM_SOURCES_MAP = {
     "Perplexity": ["perplexity.ai", "www.perplexity.ai"],
     "Claude":     ["claude.ai"],
     "Gemini":     ["gemini.google.com", "bard.google.com"],
-    "Copilot":    ["copilot.microsoft.com"],
-    "You.com":    ["you.com"],
-    "Phind":      ["phind.com"],
-    "Meta AI":    ["meta.ai"],
-    "Poe":        ["poe.com"],
 }
 LLM_HOST_TO_NAME = {host.lower(): name for name, hosts in LLM_SOURCES_MAP.items() for host in hosts}
 ALL_LLM_HOSTS = list(LLM_HOST_TO_NAME.keys())
