@@ -529,7 +529,7 @@ table_html = f"""
         <th>Organic Traffic</th>
         <th>Views</th>
         <th>Sessions</th>
-        <th>Users</th>
+        <th>Total Users</th>
         <th>Bounce %</th>
       </tr>
     </thead>
