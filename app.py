@@ -142,6 +142,16 @@ def fetch_overview(start: str, end: str):
     }
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_llm_per_page(urls: tuple, start: str, end: str):
+    return gc.ga4_llm_traffic_by_page(list(urls), start, end)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_llm_overview(start: str, end: str):
+    return gc.ga4_llm_overview(start, end)
+
+
 @st.cache_data(ttl=24 * 3600, show_spinner=False)
 def fetch_sitemap_urls_cached() -> list[str]:
     return gc.fetch_sitemap_urls()
@@ -474,7 +484,7 @@ col, asc = sort_map[sort_col]
 df = df.sort_values(col, ascending=asc, na_position="last")
 
 # ---------------- Tabs: Tracked URLs vs All Klenty URLs ----------------
-tab1, tab2 = st.tabs(["📌 Tracked URLs (29)", "🌐 All Klenty URLs"])
+tab1, tab2, tab3 = st.tabs(["📌 Tracked URLs (29)", "🌐 All Klenty URLs", "🤖 LLM Traffic"])
 
 with tab1:
     # ---- Overview cards: aggregates across the 29 tracked URLs ----
@@ -1371,6 +1381,123 @@ with tab2:
         csv_all,
         file_name=f"klenty-all-urls-{start}-to-{end}.csv",
         mime="text/csv",
+    )
+
+
+with tab3:
+    # ---- LLM overview cards ----
+    with st.spinner("Loading LLM traffic..."):
+        llm_overview = fetch_llm_overview(start, end)
+        llm_per_page = fetch_llm_per_page(tuple(all_urls), start, end)
+
+    st.markdown('<div class="section-title">LLM Traffic · Klenty Site-wide</div>', unsafe_allow_html=True)
+
+    by_llm = llm_overview["by_llm"]
+    total_llm_sessions = llm_overview["total_sessions"]
+    total_llm_users = llm_overview["total_users"]
+    site_total_sessions = a["sessions"]
+    pct_of_traffic = (total_llm_sessions / site_total_sessions * 100) if site_total_sessions else 0
+
+    # Top row: total LLM stats
+    lc1, lc2, lc3 = st.columns(3)
+    lc1.markdown(card("Total LLM Sessions", f"{total_llm_sessions:,}",
+                      f"<span style='color:#6F7782'>{pct_of_traffic:.2f}% of all site sessions</span>"),
+                 unsafe_allow_html=True)
+    lc2.markdown(card("Total LLM Users", f"{total_llm_users:,}"), unsafe_allow_html=True)
+    top_llm_name, top_llm_data = max(by_llm.items(), key=lambda x: x[1]["sessions"]) if by_llm else ("—", {"sessions": 0})
+    lc3.markdown(card("Top LLM Source", top_llm_name,
+                      f"<span style='color:#6F7782'>{top_llm_data['sessions']:,} sessions</span>"),
+                 unsafe_allow_html=True)
+
+    # Per-LLM breakdown cards
+    st.markdown('<div class="section-title" style="margin-top:1.5rem;">By LLM Source (sessions)</div>', unsafe_allow_html=True)
+    sources_with_traffic = [(n, m) for n, m in by_llm.items() if m["sessions"] > 0]
+    if sources_with_traffic:
+        cols = st.columns(min(len(sources_with_traffic), 5))
+        for i, (name, m) in enumerate(sources_with_traffic[:5]):
+            cols[i].markdown(card(name, f"{m['sessions']:,}",
+                                  f"<span style='color:#6F7782'>{m['users']:,} users</span>"),
+                             unsafe_allow_html=True)
+    else:
+        st.info("No LLM traffic detected in this period.")
+
+    st.markdown("<div style='margin-top:1.5rem'></div>", unsafe_allow_html=True)
+
+    # ---- Per-URL LLM traffic table for the 29 tracked URLs ----
+    st.markdown('<div class="section-title">Per-URL LLM Traffic · Tracked URLs (29)</div>', unsafe_allow_html=True)
+
+    # Build the dataframe
+    llm_names = list(gc.LLM_SOURCES_MAP.keys())
+    rows = []
+    for u in all_urls:
+        d = llm_per_page.get(u, {})
+        row = {"URL": u}
+        for name in llm_names:
+            row[name] = d.get(name, 0)
+        row["Total LLM"] = d.get("total", 0)
+        rows.append(row)
+    df_llm = pd.DataFrame(rows)
+    df_llm = df_llm.sort_values("Total LLM", ascending=False, na_position="last")
+
+    # Filter toggle
+    only_with = st.checkbox("Show only URLs with LLM traffic", value=True, key="llm_only_with")
+    if only_with:
+        df_llm = df_llm[df_llm["Total LLM"] > 0]
+
+    if len(df_llm) == 0:
+        st.info("No LLM traffic detected for any tracked URL in this period.")
+    else:
+        # Build sticky HTML table — same look as other tabs
+        def _ll_int(v):
+            if pd.isna(v) or v is None: return "—"
+            return f"{int(v):,}" if int(v) > 0 else "—"
+
+        ths = ["URL"] + llm_names + ["Total LLM"]
+        ths_html = "".join(f"<th>{c}</th>" for c in ths)
+
+        rows_html = []
+        for _, r in df_llm.iterrows():
+            cells = f"<td class='url'>{r['URL']}</td>"
+            for name in llm_names:
+                cells += f"<td class='num'>{_ll_int(r[name])}</td>"
+            cells += f"<td class='num'><strong>{_ll_int(r['Total LLM'])}</strong></td>"
+            rows_html.append(f"<tr>{cells}</tr>")
+
+        # Totals row
+        totals = {name: int(df_llm[name].sum()) for name in llm_names}
+        grand_total = int(df_llm["Total LLM"].sum())
+        total_cells = "<td class='url'>TOTAL · " + str(len(df_llm)) + " URLs</td>"
+        for name in llm_names:
+            total_cells += f"<td class='num'>{totals[name]:,}</td>"
+        total_cells += f"<td class='num'>{grand_total:,}</td>"
+        total_row = f"<tr class='total-row'>{total_cells}</tr>"
+
+        table_html = f"""
+        <div class="seo-table-wrap">
+          <table class="seo-table">
+            <thead><tr>{ths_html}</tr></thead>
+            <tbody>
+              {''.join(rows_html)}
+              {total_row}
+            </tbody>
+          </table>
+        </div>
+        """
+        st.markdown(table_html, unsafe_allow_html=True)
+
+        # Export
+        csv_llm = df_llm.to_csv(index=False).encode()
+        st.download_button(
+            "⬇ Export LLM Traffic as CSV",
+            csv_llm,
+            file_name=f"klenty-llm-traffic-{start}-to-{end}.csv",
+            mime="text/csv",
+        )
+
+    st.caption(
+        "LLM traffic is identified by GA4 sessionSource matching known AI tool domains "
+        "(chatgpt.com, claude.ai, perplexity.ai, gemini.google.com, copilot.microsoft.com, etc.). "
+        "Note: many LLMs use citation links, so this captures explicit referrals — not every page view triggered by an AI answer."
     )
 
 

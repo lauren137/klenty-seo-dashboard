@@ -527,6 +527,107 @@ def ga4_organic_overview(start: str, end: str) -> dict:
     }
 
 
+# LLM source hosts → human-friendly names. Add new ones here as AI tools emerge.
+LLM_SOURCES_MAP = {
+    "ChatGPT":    ["chatgpt.com", "chat.openai.com"],
+    "Perplexity": ["perplexity.ai", "www.perplexity.ai"],
+    "Claude":     ["claude.ai"],
+    "Gemini":     ["gemini.google.com", "bard.google.com"],
+    "Copilot":    ["copilot.microsoft.com"],
+    "You.com":    ["you.com"],
+    "Phind":      ["phind.com"],
+    "Meta AI":    ["meta.ai"],
+    "Poe":        ["poe.com"],
+}
+LLM_HOST_TO_NAME = {host.lower(): name for name, hosts in LLM_SOURCES_MAP.items() for host in hosts}
+ALL_LLM_HOSTS = list(LLM_HOST_TO_NAME.keys())
+
+
+def ga4_llm_traffic_by_page(pages: list[str], start: str, end: str) -> dict[str, dict]:
+    """Returns {path: {ChatGPT: int, Perplexity: int, ..., total: int, users: int}}."""
+    client = _ga4_client()
+    page_set = {p.rstrip("/") for p in pages}
+    llm_names = list(LLM_SOURCES_MAP.keys())
+
+    req = RunReportRequest(
+        property=f"properties/{GA4_PROPERTY_ID}",
+        date_ranges=[DateRange(start_date=start, end_date=end)],
+        dimensions=[Dimension(name="pagePath"), Dimension(name="sessionSource")],
+        metrics=[Metric(name="sessions"), Metric(name="totalUsers")],
+        dimension_filter=FilterExpression(
+            filter=Filter(
+                field_name="sessionSource",
+                in_list_filter=Filter.InListFilter(values=ALL_LLM_HOSTS, case_sensitive=False),
+            )
+        ),
+        limit=100000,
+    )
+    resp = client.run_report(req)
+
+    by_page: dict[str, dict] = {}
+    for row in resp.rows:
+        path = row.dimension_values[0].value
+        source = row.dimension_values[1].value.lower()
+        norm = path.rstrip("/")
+        if norm not in page_set:
+            continue
+        original = next(p for p in pages if p.rstrip("/") == norm)
+        if original not in by_page:
+            by_page[original] = {name: 0 for name in llm_names}
+            by_page[original]["total"] = 0
+            by_page[original]["users"] = 0
+
+        llm_name = LLM_HOST_TO_NAME.get(source)
+        if not llm_name:
+            continue
+
+        sessions = int(float(row.metric_values[0].value))
+        users = int(float(row.metric_values[1].value))
+        by_page[original][llm_name] += sessions
+        by_page[original]["total"] += sessions
+        by_page[original]["users"] += users  # NB: may overcount across LLMs
+
+    for p in pages:
+        if p not in by_page:
+            by_page[p] = {name: 0 for name in llm_names}
+            by_page[p]["total"] = 0
+            by_page[p]["users"] = 0
+    return by_page
+
+
+def ga4_llm_overview(start: str, end: str) -> dict:
+    """Site-wide LLM traffic totals."""
+    client = _ga4_client()
+    req = RunReportRequest(
+        property=f"properties/{GA4_PROPERTY_ID}",
+        date_ranges=[DateRange(start_date=start, end_date=end)],
+        dimensions=[Dimension(name="sessionSource")],
+        metrics=[Metric(name="sessions"), Metric(name="totalUsers")],
+        dimension_filter=FilterExpression(
+            filter=Filter(
+                field_name="sessionSource",
+                in_list_filter=Filter.InListFilter(values=ALL_LLM_HOSTS, case_sensitive=False),
+            )
+        ),
+        limit=200,
+    )
+    resp = client.run_report(req)
+    by_llm = {name: {"sessions": 0, "users": 0} for name in LLM_SOURCES_MAP}
+    total_sessions = 0
+    total_users = 0
+    for row in resp.rows:
+        source = row.dimension_values[0].value.lower()
+        sessions = int(float(row.metric_values[0].value))
+        users = int(float(row.metric_values[1].value))
+        name = LLM_HOST_TO_NAME.get(source)
+        if name:
+            by_llm[name]["sessions"] += sessions
+            by_llm[name]["users"] += users
+        total_sessions += sessions
+        total_users += users
+    return {"by_llm": by_llm, "total_sessions": total_sessions, "total_users": total_users}
+
+
 def ga4_page_trend(page: str, start: str, end: str) -> list[dict]:
     """Daily GA4 trend for one page."""
     client = _ga4_client()
