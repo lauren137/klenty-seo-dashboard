@@ -1,8 +1,11 @@
 """GSC + GA4 API clients. Loads OAuth from Streamlit secrets in prod, local files in dev."""
 import json
 import os
+import urllib.request
+import xml.etree.ElementTree as ET
 from datetime import date, timedelta
 from typing import Optional
+from urllib.parse import urlparse
 
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -26,6 +29,66 @@ SCOPES = [
     "https://www.googleapis.com/auth/analytics.readonly",
     "https://www.googleapis.com/auth/webmasters.readonly",
 ]
+
+# Klenty sitemap URLs — root + child files
+SITEMAP_URLS = [
+    "https://www.klenty.com/sitemap.xml",
+    "https://www.klenty.com/blog/post-sitemap1.xml",
+    "https://www.klenty.com/blog/post-sitemap2.xml",
+    "https://www.klenty.com/blog/post-sitemap3.xml",
+    "https://www.klenty.com/blog/page-sitemap.xml",
+]
+
+SITEMAP_NS = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+
+
+def _fetch_xml(url: str) -> Optional[bytes]:
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "klenty-seo-dashboard/1.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.read()
+    except Exception as e:
+        print(f"Failed to fetch {url}: {e}")
+        return None
+
+
+def fetch_sitemap_urls() -> list[str]:
+    """Parse all Klenty sitemaps and return a deduped list of paths (with trailing slash)."""
+    paths: set[str] = set()
+    queue = list(SITEMAP_URLS)
+    seen_sitemaps: set[str] = set()
+
+    while queue:
+        sm_url = queue.pop(0)
+        if sm_url in seen_sitemaps:
+            continue
+        seen_sitemaps.add(sm_url)
+
+        xml_data = _fetch_xml(sm_url)
+        if not xml_data:
+            continue
+        try:
+            root = ET.fromstring(xml_data)
+        except ET.ParseError as e:
+            print(f"Parse error for {sm_url}: {e}")
+            continue
+
+        # URL entries in this sitemap
+        for loc in root.findall(".//sm:url/sm:loc", SITEMAP_NS):
+            if loc.text:
+                path = urlparse(loc.text.strip()).path or "/"
+                if not path.endswith("/"):
+                    path += "/"
+                paths.add(path)
+
+        # Nested sitemap entries (sitemap index)
+        for loc in root.findall(".//sm:sitemap/sm:loc", SITEMAP_NS):
+            if loc.text:
+                child = loc.text.strip()
+                if child not in seen_sitemaps:
+                    queue.append(child)
+
+    return sorted(paths)
 
 
 def _load_token_dict() -> dict | None:

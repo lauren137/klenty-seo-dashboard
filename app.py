@@ -142,6 +142,47 @@ def fetch_overview(start: str, end: str):
     }
 
 
+@st.cache_data(ttl=24 * 3600, show_spinner=False)
+def fetch_sitemap_urls_cached() -> list[str]:
+    return gc.fetch_sitemap_urls()
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_sitemap_metrics(start: str, end: str):
+    """Returns a DataFrame of ALL sitemap URLs with their GSC + GA4 metrics."""
+    sitemap_paths = fetch_sitemap_urls_cached()
+    # Pull a wide swath of pages from both APIs — match by path
+    gsc_data = gc.gsc_all_pages(start, end, limit=25000)
+    ga4_data = gc.ga4_all_pages(start, end, limit=10000)
+
+    def norm(p: str) -> str:
+        if not p:
+            return "/"
+        if not p.endswith("/"):
+            p = p + "/"
+        return p
+
+    gsc_norm = {norm(p): v for p, v in gsc_data.items()}
+    ga4_norm = {norm(p): v for p, v in ga4_data.items()}
+
+    rows = []
+    for path in sitemap_paths:
+        g_m = gsc_norm.get(path, {})
+        a_m = ga4_norm.get(path, {})
+        rows.append({
+            "URL": path,
+            "Position": g_m.get("position") if g_m.get("position") else None,
+            "Clicks": g_m.get("clicks", 0),
+            "Impressions": g_m.get("impressions", 0),
+            "CTR %": round(g_m.get("ctr", 0), 2),
+            "Organic Traffic": a_m.get("organic", 0),
+            "Sessions": a_m.get("sessions", 0),
+            "Users": a_m.get("users", 0),
+            "Bounce %": round(a_m.get("bounce", 0), 1),
+        })
+    return pd.DataFrame(rows)
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def fetch_all_klenty(start: str, end: str, limit: int = 200):
     """Pulls top-N pages site-wide from GSC + GA4 and merges them.
@@ -1157,30 +1198,41 @@ with tab1:
         st.info("Pick a tracked URL above or paste any klenty.com URL to see its trend.")
 
 with tab2:
-    st.markdown('<div class="section-title">All Klenty URLs · Site-wide Performance</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">All Klenty URLs · From sitemap.xml</div>', unsafe_allow_html=True)
 
-    c_lim, c_search = st.columns([1, 3])
-    with c_lim:
-        all_limit = st.selectbox(
-            "Show top",
-            [50, 100, 200, 500],
-            index=2,
-            key="all_limit",
+    with st.spinner("Loading Klenty sitemap + metrics..."):
+        df_all = fetch_sitemap_metrics(start, end)
+        total_sitemap = len(df_all)
+
+    c_filter, c_search = st.columns([2, 3])
+    with c_filter:
+        filter_choice = st.radio(
+            "Filter",
+            ["All URLs", "With organic traffic", "With clicks", "Zero traffic"],
+            horizontal=False,
+            key="all_filter",
+            label_visibility="collapsed",
         )
     with c_search:
         all_search = st.text_input("Search URLs", placeholder="filter URLs...", key="all_search", label_visibility="collapsed")
 
-    with st.spinner(f"Loading top {all_limit} Klenty pages..."):
-        df_all = fetch_all_klenty(start, end, limit=int(all_limit))
+    # Apply filters
+    if filter_choice == "With organic traffic":
+        df_all = df_all[df_all["Organic Traffic"] > 0]
+    elif filter_choice == "With clicks":
+        df_all = df_all[df_all["Clicks"] > 0]
+    elif filter_choice == "Zero traffic":
+        df_all = df_all[(df_all["Clicks"] == 0) & (df_all["Organic Traffic"] == 0) & (df_all["Sessions"] == 0)]
 
     if all_search:
         df_all = df_all[df_all["URL"].str.contains(all_search, case=False, na=False)]
 
     df_all = df_all.sort_values("Clicks", ascending=False, na_position="last")
 
+    with_traffic = (df_all["Clicks"] > 0).sum() + (df_all["Organic Traffic"] > 0).sum()
     st.markdown(
         f"<div style='color:#6F7782; font-size:0.85rem; margin: 0.5rem 0 0.75rem;'>"
-        f"Showing {len(df_all)} pages from the top {all_limit} by clicks/sessions site-wide."
+        f"<b style='color:#1E1F21'>{len(df_all):,}</b> of <b style='color:#1E1F21'>{total_sitemap:,}</b> URLs shown · Source: 5 Klenty sitemaps · Cached for 24h"
         f"</div>",
         unsafe_allow_html=True,
     )
