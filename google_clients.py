@@ -9,7 +9,7 @@ from google.auth.transport.requests import Request
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import (
     RunReportRequest, DateRange, Metric, Dimension,
-    Filter, FilterExpression, FilterExpressionList,
+    Filter, FilterExpression, FilterExpressionList, OrderBy,
 )
 from googleapiclient.discovery import build
 
@@ -193,6 +193,82 @@ def ga4_overview_daily(start: str, end: str) -> list[dict]:
             "views": int(float(row.metric_values[2].value)),
         })
     return sorted(out, key=lambda x: x["date"])
+
+
+def gsc_all_pages(start: str, end: str, limit: int = 500) -> dict[str, dict]:
+    """Top N pages site-wide by clicks. Returns {path: {clicks, impressions, ctr, position}}."""
+    from urllib.parse import urlparse
+    svc = build("searchconsole", "v1", credentials=get_credentials(), cache_discovery=False)
+    resp = svc.searchanalytics().query(siteUrl=GSC_SITE_URL, body={
+        "startDate": start, "endDate": end,
+        "dimensions": ["page"], "rowLimit": limit,
+        "orderBy": [{"fieldName": "clicks", "sortOrder": "DESCENDING"}],
+    }).execute()
+    by_page = {}
+    for row in resp.get("rows", []):
+        full_url = row["keys"][0]
+        path = urlparse(full_url).path or "/"
+        by_page[path] = {
+            "clicks": int(row.get("clicks", 0)),
+            "impressions": int(row.get("impressions", 0)),
+            "ctr": float(row.get("ctr", 0)) * 100,
+            "position": float(row.get("position", 0)),
+        }
+    return by_page
+
+
+def ga4_all_pages(start: str, end: str, limit: int = 500) -> dict[str, dict]:
+    """Top N pages site-wide by sessions. Returns {path: {views, sessions, users, bounce, organic}}."""
+    client = _ga4_client()
+
+    # Overall metrics
+    req = RunReportRequest(
+        property=f"properties/{GA4_PROPERTY_ID}",
+        date_ranges=[DateRange(start_date=start, end_date=end)],
+        dimensions=[Dimension(name="pagePath")],
+        metrics=[
+            Metric(name="screenPageViews"),
+            Metric(name="sessions"),
+            Metric(name="totalUsers"),
+            Metric(name="bounceRate"),
+        ],
+        order_bys=[OrderBy(metric=OrderBy.MetricOrderBy(metric_name="sessions"), desc=True)],
+        limit=limit,
+    )
+    resp = client.run_report(req)
+    by_page = {}
+    for row in resp.rows:
+        path = row.dimension_values[0].value
+        norm = path if path.endswith("/") else path + "/"
+        by_page[norm] = {
+            "views": int(float(row.metric_values[0].value)),
+            "sessions": int(float(row.metric_values[1].value)),
+            "users": int(float(row.metric_values[2].value)),
+            "bounce": float(row.metric_values[3].value) * 100,
+            "organic": 0,
+        }
+
+    # Organic-only sessions for these pages
+    organic_req = RunReportRequest(
+        property=f"properties/{GA4_PROPERTY_ID}",
+        date_ranges=[DateRange(start_date=start, end_date=end)],
+        dimensions=[Dimension(name="pagePath")],
+        metrics=[Metric(name="sessions")],
+        dimension_filter=FilterExpression(
+            filter=Filter(
+                field_name="sessionDefaultChannelGroup",
+                string_filter=Filter.StringFilter(value="Organic Search"),
+            )
+        ),
+        limit=limit * 2,
+    )
+    organic_resp = client.run_report(organic_req)
+    for row in organic_resp.rows:
+        path = row.dimension_values[0].value
+        norm = path if path.endswith("/") else path + "/"
+        if norm in by_page:
+            by_page[norm]["organic"] = int(float(row.metric_values[0].value))
+    return by_page
 
 
 def gsc_overview(start: str, end: str) -> dict:
