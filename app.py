@@ -226,7 +226,7 @@ with st.sidebar:
     st.markdown("### Sort by")
     sort_col = st.selectbox(
         "Sort",
-        ["Clicks ↓", "Impressions ↓", "Position ↑", "CTR ↓", "Organic Traffic ↓", "Users ↓", "Sessions ↓", "Views ↓", "Page A→Z"],
+        ["Clicks ↓", "Impressions ↓", "Position ↑", "CTR ↓", "Organic Traffic ↓", "Users ↓", "Sessions ↓", "Page A→Z"],
         label_visibility="collapsed",
     )
 
@@ -363,7 +363,6 @@ for u in all_urls:
         "Impressions": m["impressions"],
         "CTR %": round(m["ctr"], 2),
         "Organic Traffic": m["organic"],
-        "Views": m["views"],
         "Sessions": m["sessions"],
         "Users": m["users"],
         "Bounce %": round(m["bounce"], 1),
@@ -379,7 +378,6 @@ sort_map = {
     "Organic Traffic ↓": ("Organic Traffic", False),
     "Users ↓": ("Users", False),
     "Sessions ↓": ("Sessions", False),
-    "Views ↓": ("Views", False),
     "Page A→Z": ("URL", True),
 }
 col, asc = sort_map[sort_col]
@@ -420,7 +418,6 @@ for _, r in df.iterrows():
         f"<td class='num'>{_fmt_int(r['Impressions'])}</td>"
         f"<td class='num'>{_fmt_pct(r['CTR %'])}</td>"
         f"<td class='num'>{_fmt_int(r['Organic Traffic'])}</td>"
-        f"<td class='num'>{_fmt_int(r['Views'])}</td>"
         f"<td class='num'>{_fmt_int(r['Sessions'])}</td>"
         f"<td class='num'>{_fmt_int(r['Users'])}</td>"
         f"<td class='num'>{_fmt_pct1(r['Bounce %'])}</td>"
@@ -437,7 +434,6 @@ if len(df) > 0:
     t_clicks = int(df['Clicks'].sum())
     t_impr = int(df['Impressions'].sum())
     t_org = int(df['Organic Traffic'].sum())
-    t_views = int(df['Views'].sum())
     t_sess = int(df['Sessions'].sum())
     t_users = int(df['Users'].sum())
 
@@ -449,7 +445,6 @@ if len(df) > 0:
         + pct_cell(t_impr, g['impressions'])
         + "<td class='num'>—</td>"
         + pct_cell(t_org, ao['sessions'])
-        + pct_cell(t_views, a['views'])
         + pct_cell(t_sess, a['sessions'])
         + pct_cell(t_users, a['users'])
         + "<td class='num'>—</td>"
@@ -527,7 +522,6 @@ table_html = f"""
         <th>Impressions</th>
         <th>CTR %</th>
         <th>Organic Traffic</th>
-        <th>Views</th>
         <th>Sessions</th>
         <th>Total Users</th>
         <th>Bounce %</th>
