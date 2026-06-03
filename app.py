@@ -411,21 +411,34 @@ g = overview["gsc"]; pg = prior["gsc"]
 a = overview["ga4"]; pa = prior["ga4"]
 ao = overview["ga4_organic"]; pao = prior["ga4_organic"]
 
-# Row 1: Google Search Console (site-wide)
-st.markdown('<div class="section-title">Klenty · Search Console</div>', unsafe_allow_html=True)
-c1, c2, c3, c4 = st.columns(4)
-c1.markdown(card("Clicks", f"{g['clicks']:,}", delta_str(g['clicks'], pg['clicks'])), unsafe_allow_html=True)
-c2.markdown(card("Impressions", f"{g['impressions']:,}", delta_str(g['impressions'], pg['impressions'])), unsafe_allow_html=True)
-c3.markdown(card("Avg Position", f"{g['position']:.1f}", delta_str(g['position'], pg['position'], inverse=True)), unsafe_allow_html=True)
-c4.markdown(card("CTR", f"{g['ctr']:.2f}%", delta_str(g['ctr'], pg['ctr'])), unsafe_allow_html=True)
+# Eager-fetch prior tracked-URL metrics for card deltas in Tab 1
+with st.spinner("Loading prior period..."):
+    prior_metrics = fetch_metrics(tuple(all_urls), p_start, p_end)
 
-# Row 2: Site-wide traffic — Overall + Organic
-st.markdown('<div class="section-title" style="margin-top:1.5rem;">Klenty · Site Traffic (GA4)</div>', unsafe_allow_html=True)
-c5, c6, c7, c8 = st.columns(4)
-c5.markdown(card("Overall Users", f"{a['users']:,}", delta_str(a['users'], pa['users'])), unsafe_allow_html=True)
-c6.markdown(card("Overall Sessions", f"{a['sessions']:,}", delta_str(a['sessions'], pa['sessions'])), unsafe_allow_html=True)
-c7.markdown(card("Organic Users", f"{ao['users']:,}", delta_str(ao['users'], pao['users'])), unsafe_allow_html=True)
-c8.markdown(card("Organic Sessions", f"{ao['sessions']:,}", delta_str(ao['sessions'], pao['sessions'])), unsafe_allow_html=True)
+
+def _agg_tracked(metrics_dict: dict, urls: list[str]) -> dict:
+    """Sum per-URL metrics across tracked URLs (with impression-weighted position)."""
+    total_clicks = sum(metrics_dict.get(u, {}).get("clicks", 0) or 0 for u in urls)
+    total_impr = sum(metrics_dict.get(u, {}).get("impressions", 0) or 0 for u in urls)
+    weighted_pos = sum(
+        (metrics_dict.get(u, {}).get("position") or 0) * (metrics_dict.get(u, {}).get("impressions") or 0)
+        for u in urls
+    )
+    return {
+        "clicks": total_clicks,
+        "impressions": total_impr,
+        "position": (weighted_pos / total_impr) if total_impr else 0,
+        "ctr": (total_clicks / total_impr * 100) if total_impr else 0,
+        "views": sum(metrics_dict.get(u, {}).get("views", 0) or 0 for u in urls),
+        "sessions": sum(metrics_dict.get(u, {}).get("sessions", 0) or 0 for u in urls),
+        "users": sum(metrics_dict.get(u, {}).get("users", 0) or 0 for u in urls),
+        "organic_sessions": sum(metrics_dict.get(u, {}).get("organic", 0) or 0 for u in urls),
+        "organic_users": sum(metrics_dict.get(u, {}).get("organic_users", 0) or 0 for u in urls),
+    }
+
+# Pre-compute tracked-URL aggregates for current + prior period
+tracked = _agg_tracked(metrics, all_urls)
+prior_tracked = _agg_tracked(prior_metrics, all_urls)
 
 # ---------------- Build dataframe ----------------
 rows = []
@@ -464,6 +477,22 @@ df = df.sort_values(col, ascending=asc, na_position="last")
 tab1, tab2 = st.tabs(["📌 Tracked URLs (29)", "🌐 All Klenty URLs"])
 
 with tab1:
+    # ---- Overview cards: aggregates across the 29 tracked URLs ----
+    st.markdown('<div class="section-title">Tracked URLs · Search Console</div>', unsafe_allow_html=True)
+    tc1, tc2, tc3, tc4 = st.columns(4)
+    tc1.markdown(card("Clicks", f"{tracked['clicks']:,}", delta_str(tracked['clicks'], prior_tracked['clicks'])), unsafe_allow_html=True)
+    tc2.markdown(card("Impressions", f"{tracked['impressions']:,}", delta_str(tracked['impressions'], prior_tracked['impressions'])), unsafe_allow_html=True)
+    tc3.markdown(card("Avg Position", f"{tracked['position']:.1f}", delta_str(tracked['position'], prior_tracked['position'], inverse=True)), unsafe_allow_html=True)
+    tc4.markdown(card("CTR", f"{tracked['ctr']:.2f}%", delta_str(tracked['ctr'], prior_tracked['ctr'])), unsafe_allow_html=True)
+
+    st.markdown('<div class="section-title" style="margin-top:1.5rem;">Tracked URLs · Site Traffic (GA4)</div>', unsafe_allow_html=True)
+    tc5, tc6, tc7, tc8 = st.columns(4)
+    tc5.markdown(card("Total Users", f"{tracked['users']:,}", delta_str(tracked['users'], prior_tracked['users'])), unsafe_allow_html=True)
+    tc6.markdown(card("Sessions", f"{tracked['sessions']:,}", delta_str(tracked['sessions'], prior_tracked['sessions'])), unsafe_allow_html=True)
+    tc7.markdown(card("Organic Users", f"{tracked['organic_users']:,}", delta_str(tracked['organic_users'], prior_tracked['organic_users'])), unsafe_allow_html=True)
+    tc8.markdown(card("Organic Sessions", f"{tracked['organic_sessions']:,}", delta_str(tracked['organic_sessions'], prior_tracked['organic_sessions'])), unsafe_allow_html=True)
+    st.markdown("<div style='margin-top:1.5rem'></div>", unsafe_allow_html=True)
+
     st.markdown('<div class="section-title">Tracked URLs · Performance</div>', unsafe_allow_html=True)
 
     # ---- Custom HTML table with sticky header + sticky TOTAL row ----
@@ -1198,6 +1227,22 @@ with tab1:
         st.info("Pick a tracked URL above or paste any klenty.com URL to see its trend.")
 
 with tab2:
+    # ---- Site-wide overview cards (Klenty as a whole) ----
+    st.markdown('<div class="section-title">Klenty Site-wide · Search Console</div>', unsafe_allow_html=True)
+    sc1, sc2, sc3, sc4 = st.columns(4)
+    sc1.markdown(card("Clicks", f"{g['clicks']:,}", delta_str(g['clicks'], pg['clicks'])), unsafe_allow_html=True)
+    sc2.markdown(card("Impressions", f"{g['impressions']:,}", delta_str(g['impressions'], pg['impressions'])), unsafe_allow_html=True)
+    sc3.markdown(card("Avg Position", f"{g['position']:.1f}", delta_str(g['position'], pg['position'], inverse=True)), unsafe_allow_html=True)
+    sc4.markdown(card("CTR", f"{g['ctr']:.2f}%", delta_str(g['ctr'], pg['ctr'])), unsafe_allow_html=True)
+
+    st.markdown('<div class="section-title" style="margin-top:1.5rem;">Klenty Site-wide · Site Traffic (GA4)</div>', unsafe_allow_html=True)
+    sc5, sc6, sc7, sc8 = st.columns(4)
+    sc5.markdown(card("Overall Users", f"{a['users']:,}", delta_str(a['users'], pa['users'])), unsafe_allow_html=True)
+    sc6.markdown(card("Overall Sessions", f"{a['sessions']:,}", delta_str(a['sessions'], pa['sessions'])), unsafe_allow_html=True)
+    sc7.markdown(card("Organic Users", f"{ao['users']:,}", delta_str(ao['users'], pao['users'])), unsafe_allow_html=True)
+    sc8.markdown(card("Organic Sessions", f"{ao['sessions']:,}", delta_str(ao['sessions'], pao['sessions'])), unsafe_allow_html=True)
+    st.markdown("<div style='margin-top:1.5rem'></div>", unsafe_allow_html=True)
+
     st.markdown('<div class="section-title">All Klenty URLs · From sitemap.xml</div>', unsafe_allow_html=True)
 
     with st.spinner("Loading Klenty sitemap + metrics..."):
