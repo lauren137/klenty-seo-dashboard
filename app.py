@@ -427,22 +427,33 @@ for _, r in df.iterrows():
         "</tr>"
     )
 
-# TOTAL row — only for columns the user requested
+# TOTAL row — sum with "% of site total" subtext (GA4 style)
 total_row_html = ""
 if len(df) > 0:
+    def pct_cell(value: int, site_total: int) -> str:
+        pct = (value / site_total * 100) if site_total else 0
+        return f"<td class='num'>{value:,}<div class='pct'>{pct:.1f}% of total</div></td>"
+
+    t_clicks = int(df['Clicks'].sum())
+    t_impr = int(df['Impressions'].sum())
+    t_org = int(df['Organic Traffic'].sum())
+    t_views = int(df['Views'].sum())
+    t_sess = int(df['Sessions'].sum())
+    t_users = int(df['Users'].sum())
+
     total_row_html = (
         "<tr class='total-row'>"
         f"<td class='url'>TOTAL · {len(df)} URLs</td>"
         "<td class='num'>—</td>"
-        f"<td class='num'>{int(df['Clicks'].sum()):,}</td>"
-        f"<td class='num'>{int(df['Impressions'].sum()):,}</td>"
-        "<td class='num'>—</td>"
-        f"<td class='num'>{int(df['Organic Traffic'].sum()):,}</td>"
-        f"<td class='num'>{int(df['Views'].sum()):,}</td>"
-        f"<td class='num'>{int(df['Sessions'].sum()):,}</td>"
-        f"<td class='num'>{int(df['Users'].sum()):,}</td>"
-        "<td class='num'>—</td>"
-        "</tr>"
+        + pct_cell(t_clicks, g['clicks'])
+        + pct_cell(t_impr, g['impressions'])
+        + "<td class='num'>—</td>"
+        + pct_cell(t_org, ao['sessions'])
+        + pct_cell(t_views, a['views'])
+        + pct_cell(t_sess, a['sessions'])
+        + pct_cell(t_users, a['users'])
+        + "<td class='num'>—</td>"
+        + "</tr>"
     )
 
 table_html = f"""
@@ -495,6 +506,14 @@ table_html = f"""
     border-bottom: none;
     z-index: 4;
     color: #1E1F21;
+    padding-top: 0.7rem;
+    padding-bottom: 0.7rem;
+  }}
+  table.seo-table tbody tr.total-row td .pct {{
+    font-size: 0.7rem;
+    color: #6F7782;
+    font-weight: 400;
+    margin-top: 0.15rem;
   }}
 </style>
 
