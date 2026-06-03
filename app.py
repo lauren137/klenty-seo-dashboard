@@ -152,6 +152,13 @@ def fetch_llm_overview(start: str, end: str):
     return gc.ga4_llm_overview(start, end)
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_llm_all_klenty(start: str, end: str):
+    """LLM traffic for every URL in the sitemap."""
+    sitemap_paths = fetch_sitemap_urls_cached()
+    return gc.ga4_llm_traffic_by_page(sitemap_paths, start, end)
+
+
 @st.cache_data(ttl=24 * 3600, show_spinner=False)
 def fetch_sitemap_urls_cached() -> list[str]:
     return gc.fetch_sitemap_urls()
@@ -484,7 +491,12 @@ col, asc = sort_map[sort_col]
 df = df.sort_values(col, ascending=asc, na_position="last")
 
 # ---------------- Tabs: Tracked URLs vs All Klenty URLs ----------------
-tab1, tab2, tab3 = st.tabs([f"📌 Tracked Clusters ({len(all_urls)})", "🌐 All Klenty URLs", "🤖 LLM Traffic"])
+tab1, tab2, tab3, tab4 = st.tabs([
+    f"📌 Tracked Clusters ({len(all_urls)})",
+    "🌐 All Klenty URLs",
+    "🤖 LLM Traffic · Tracked",
+    "🤖 LLM Traffic · All Klenty",
+])
 
 with tab1:
     # ---- Overview cards: aggregates across the 29 tracked URLs ----
@@ -1645,6 +1657,126 @@ with tab3:
             if st.button("Hide summary", type="secondary", use_container_width=True, key="hide_llm_sum"):
                 st.session_state["show_llm_summary"] = False
                 st.rerun()
+
+
+with tab4:
+    st.markdown('<div class="section-title">LLM Traffic · All Klenty URLs (from sitemap.xml)</div>', unsafe_allow_html=True)
+
+    with st.spinner("Loading LLM traffic for all Klenty pages..."):
+        llm_all = fetch_llm_all_klenty(start, end)
+        sitemap_paths = fetch_sitemap_urls_cached()
+
+    llm_names = list(gc.LLM_SOURCES_MAP.keys())
+
+    # Build dataframe
+    rows = []
+    for path in sitemap_paths:
+        d = llm_all.get(path, {})
+        row = {"URL": path}
+        for name in llm_names:
+            row[name] = d.get(name, 0)
+        row["Total LLM"] = d.get("total", 0)
+        rows.append(row)
+    df_llm_all = pd.DataFrame(rows)
+    df_llm_all = df_llm_all.sort_values("Total LLM", ascending=False, na_position="last")
+
+    total_with = (df_llm_all["Total LLM"] > 0).sum()
+    grand_total_all = int(df_llm_all["Total LLM"].sum())
+
+    # Top-row summary
+    st.markdown(
+        f"<div style='color:#6F7782; font-size:0.85rem; margin-bottom:0.75rem;'>"
+        f"<b style='color:#1E1F21'>{total_with:,}</b> of <b style='color:#1E1F21'>{len(sitemap_paths):,}</b> sitemap URLs received LLM citations · "
+        f"<b style='color:#1E1F21'>{grand_total_all:,}</b> total LLM sessions"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # Filter + search
+    fc1, fc2 = st.columns([2, 3])
+    with fc1:
+        llm_all_filter = st.radio(
+            "Filter",
+            ["With LLM traffic", "All URLs", "Without LLM traffic"],
+            horizontal=False,
+            key="llm_all_filter",
+            label_visibility="collapsed",
+        )
+    with fc2:
+        llm_all_search = st.text_input(
+            "Search URLs",
+            placeholder="filter URLs...",
+            key="llm_all_search",
+            label_visibility="collapsed",
+        )
+
+    if llm_all_filter == "With LLM traffic":
+        df_llm_all = df_llm_all[df_llm_all["Total LLM"] > 0]
+    elif llm_all_filter == "Without LLM traffic":
+        df_llm_all = df_llm_all[df_llm_all["Total LLM"] == 0]
+
+    if llm_all_search:
+        df_llm_all = df_llm_all[df_llm_all["URL"].str.contains(llm_all_search, case=False, na=False)]
+
+    st.markdown(
+        f"<div style='color:#6F7782; font-size:0.8rem; margin-bottom:0.5rem;'>"
+        f"Showing {len(df_llm_all):,} URLs"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    if len(df_llm_all) == 0:
+        st.info("No URLs match the current filter.")
+    else:
+        def _ll_int2(v):
+            if pd.isna(v) or v is None: return "—"
+            return f"{int(v):,}" if int(v) > 0 else "—"
+
+        ths = ["URL"] + llm_names + ["Total LLM"]
+        ths_html = "".join(f"<th>{c}</th>" for c in ths)
+
+        rows_html = []
+        for _, r in df_llm_all.iterrows():
+            cells = f"<td class='url'>{r['URL']}</td>"
+            for name in llm_names:
+                cells += f"<td class='num'>{_ll_int2(r[name])}</td>"
+            cells += f"<td class='num'><strong>{_ll_int2(r['Total LLM'])}</strong></td>"
+            rows_html.append(f"<tr>{cells}</tr>")
+
+        # TOTAL row
+        totals = {name: int(df_llm_all[name].sum()) for name in llm_names}
+        grand_total = int(df_llm_all["Total LLM"].sum())
+        total_cells = f"<td class='url'>TOTAL · {len(df_llm_all):,} URLs</td>"
+        for name in llm_names:
+            total_cells += f"<td class='num'>{totals[name]:,}</td>"
+        total_cells += f"<td class='num'>{grand_total:,}</td>"
+        total_row_html = f"<tr class='total-row'>{total_cells}</tr>"
+
+        table_html = f"""
+        <div class="seo-table-wrap">
+          <table class="seo-table">
+            <thead><tr>{ths_html}</tr></thead>
+            <tbody>
+              {''.join(rows_html)}
+              {total_row_html}
+            </tbody>
+          </table>
+        </div>
+        """
+        st.markdown(table_html, unsafe_allow_html=True)
+
+        csv_llm_all = df_llm_all.to_csv(index=False).encode()
+        st.download_button(
+            "⬇ Export All-Klenty LLM Traffic as CSV",
+            csv_llm_all,
+            file_name=f"klenty-all-llm-traffic-{start}-to-{end}.csv",
+            mime="text/csv",
+        )
+
+    st.caption(
+        f"Showing LLM citations for all {len(sitemap_paths)} URLs in Klenty's sitemaps. "
+        "Same detection logic as Tab 3: GA4 sessionSource matching ChatGPT, Perplexity, Claude, Gemini hosts."
+    )
 
 
 st.markdown(
