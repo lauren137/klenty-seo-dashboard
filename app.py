@@ -484,7 +484,7 @@ col, asc = sort_map[sort_col]
 df = df.sort_values(col, ascending=asc, na_position="last")
 
 # ---------------- Tabs: Tracked URLs vs All Klenty URLs ----------------
-tab1, tab2, tab3 = st.tabs(["📌 Tracked URLs (29)", "🌐 All Klenty URLs", "🤖 LLM Traffic"])
+tab1, tab2, tab3 = st.tabs([f"📌 Tracked Clusters ({len(all_urls)})", "🌐 All Klenty URLs", "🤖 LLM Traffic"])
 
 with tab1:
     # ---- Overview cards: aggregates across the 29 tracked URLs ----
