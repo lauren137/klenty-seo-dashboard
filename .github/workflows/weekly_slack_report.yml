@@ -2,8 +2,12 @@ name: Weekly SEO Slack Report
 
 on:
   schedule:
-    # Tuesday 09:00 IST = 03:30 UTC
-    - cron: "30 3 * * 2"
+    # Tuesday 09:00 IST primary, with backups at 10:00 and 11:00 IST.
+    # GitHub's free-tier scheduler can silently skip cron runs during peak load;
+    # the backups ensure delivery. The Python script's first-run guard prevents duplicates.
+    - cron: "30 3 * * 2"   # 09:00 IST
+    - cron: "30 4 * * 2"   # 10:00 IST (backup #1)
+    - cron: "30 5 * * 2"   # 11:00 IST (backup #2)
   workflow_dispatch:  # Manual "Run workflow" button in the Actions tab
 
 jobs:
@@ -40,4 +44,9 @@ jobs:
           GSC_SITE_URL: ${{ secrets.GSC_SITE_URL }}
           SITE_DOMAIN: ${{ secrets.SITE_DOMAIN }}
           DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+          # Dedup guard: skip if another scheduled run today already succeeded
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_WORKFLOW_ID: ${{ github.workflow }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: python weekly_report.py

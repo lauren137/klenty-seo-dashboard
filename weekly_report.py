@@ -9,7 +9,7 @@ import json
 import os
 import sys
 import urllib.request
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 # Reuse the existing dashboard modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -20,6 +20,47 @@ SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
 SEED_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seed_urls.json")
 
 SEVERITY_EMOJI = {"high": "🔴", "medium": "🟡", "low": "🟢", "info": "🔵"}
+
+
+def already_posted_today() -> bool:
+    """Check via GitHub API whether a scheduled run from this workflow already
+    succeeded today (UTC). Manual workflow_dispatch runs ALWAYS proceed."""
+    if os.environ.get("GITHUB_EVENT_NAME") != "schedule":
+        return False  # always allow manual triggers
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    token = os.environ.get("GITHUB_TOKEN")
+    wf_name = os.environ.get("GITHUB_WORKFLOW_ID", "")
+    if not (repo and token):
+        return False
+    today_utc = date.today()
+    url = f"https://api.github.com/repos/{repo}/actions/runs?per_page=30&event=schedule"
+    try:
+        req = urllib.request.Request(url, headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        })
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.load(resp)
+    except Exception as e:
+        print(f"Dedup check failed (proceeding anyway): {e}")
+        return False
+    current_run_id = os.environ.get("GITHUB_RUN_ID", "")
+    for run in data.get("workflow_runs", []):
+        if str(run.get("id")) == current_run_id:
+            continue  # skip the in-flight run
+        if run.get("name") != wf_name:
+            continue
+        if run.get("status") != "completed" or run.get("conclusion") != "success":
+            continue
+        try:
+            ran_at = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00")).date()
+        except Exception:
+            continue
+        if ran_at == today_utc:
+            print(f"Already posted today (run #{run.get('run_number')} at {run['created_at']}). Skipping.")
+            return True
+    return False
 
 
 # ---------------- Date math ----------------
@@ -355,6 +396,9 @@ def post_to_slack(blocks: list[dict]):
 # ---------------- Main ----------------
 
 def main():
+    if already_posted_today():
+        return
+
     today = date.today()
     mon, sun = last_full_week(today)
     p_mon, p_sun = prior_week(mon, sun)
