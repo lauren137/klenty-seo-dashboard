@@ -2,12 +2,13 @@ name: Weekly SEO Slack Report
 
 on:
   schedule:
-    # Tuesday 09:00 IST primary, with backups at 10:00 and 11:00 IST.
-    # GitHub's free-tier scheduler can silently skip cron runs during peak load;
-    # the backups ensure delivery. The Python script's first-run guard prevents duplicates.
-    - cron: "30 3 * * 2"   # 09:00 IST
-    - cron: "30 4 * * 2"   # 10:00 IST (backup #1)
-    - cron: "30 5 * * 2"   # 11:00 IST (backup #2)
+    # Tuesday 09:00–11:45 IST window — fires every 15 min (~12 attempts).
+    # GitHub's free-tier scheduler routinely drops or delays scheduled runs;
+    # firing many times in a window dramatically improves the odds that at least
+    # one fires close to the target time. The Python dedup guard ensures only
+    # the first successful run actually posts to Slack — the rest exit silently.
+    - cron: "*/15 3-5 * * 2"   # 03:30–05:45 UTC = 09:00–11:15 IST
+    - cron: "0 6 * * 2"        # 06:00 UTC = 11:30 IST (final safety net)
   workflow_dispatch:  # Manual "Run workflow" button in the Actions tab
 
 jobs:
